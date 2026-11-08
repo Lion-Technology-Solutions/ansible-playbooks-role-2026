@@ -1,0 +1,28 @@
+---
+- name: Copy the static classroom resource directory
+  ansible.builtin.copy:
+    src: assets/
+    dest: '{{ class_root }}/assets/'
+    owner: '{{ class_user }}'
+    group: '{{ class_user }}'
+    mode: '0644'
+    directory_mode: '0755'
+
+- name: Render a page using defaults, inventory variables and host facts
+  ansible.builtin.template:
+    src: index.html.j2
+    dest: '{{ class_root }}/index.html'
+    owner: '{{ class_user }}'
+    group: '{{ class_user }}'
+    mode: '0644'
+
+- name: Write the deployment information file
+  ansible.builtin.copy:
+    content: |
+      environment={{ class_environment }}
+      host={{ inventory_hostname }}
+      port={{ class_port }}
+    dest: '{{ class_root }}/deployment.txt'
+    owner: '{{ class_user }}'
+    group: '{{ class_user }}'
+    mode: '0644'

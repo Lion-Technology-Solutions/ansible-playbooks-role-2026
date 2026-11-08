@@ -1,0 +1,16 @@
+---
+- name: Render the dedicated Nginx server configuration
+  ansible.builtin.template:
+    src: liontech.conf.j2
+    dest: /etc/nginx/conf.d/liontech_class.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: true
+  notify: Reload classroom nginx
+
+- name: Ensure Nginx starts at boot and is running
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true

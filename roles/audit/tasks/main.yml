@@ -1,0 +1,17 @@
+---
+- name: Inspect the rendered page
+  ansible.builtin.stat:
+    path: '{{ class_root }}/index.html'
+    checksum_algorithm: sha256
+  register: class_page
+
+- name: Report the page checksum
+  ansible.builtin.debug:
+    msg: 'Page checksum on {{ inventory_hostname }}: {{ class_page.stat.checksum | default("not created in check mode") }}'
+
+- name: Fetch deployment metadata into a per-host directory on the controller
+  ansible.builtin.fetch:
+    src: '{{ class_root }}/deployment.txt'
+    dest: '{{ playbook_dir }}/artifacts/'
+    flat: false
+  when: not ansible_check_mode

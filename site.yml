@@ -1,0 +1,51 @@
+---
+- name: Deploy and verify the LionTech classroom website
+  hosts: webservers
+  become: true
+  gather_facts: true
+  serial: 1
+  any_errors_fatal: true
+  pre_tasks:
+    - name: Require the supported lab operating system
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_version'] in ['22.04', '24.04']
+          - class_port | int >= 1024
+          - class_port | int <= 65535
+          - class_root == '/var/www/liontech_class'
+        fail_msg: Use disposable Ubuntu 22.04 or 24.04 lab VMs and the dedicated lab path.
+      tags: [always]
+  roles:
+    # web_content -> web_server -> baseline demonstrates role dependencies.
+    - role: web_content
+      tags: [deploy]
+    - role: audit
+      tags: [audit]
+  post_tasks:
+    - name: Run notified handlers before the HTTP verification
+      ansible.builtin.meta: flush_handlers
+      tags: [always]
+    - name: Wait for the website listener on each managed VM
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: '{{ class_port }}'
+        timeout: 30
+      when: not ansible_check_mode
+      tags: [verify]
+    - name: Verify HTML response from the managed VM itself
+      ansible.builtin.uri:
+        url: 'http://127.0.0.1:{{ class_port }}/'
+        return_content: true
+        status_code: 200
+      register: class_http
+      retries: 5
+      delay: 2
+      until: class_http.status == 200
+      when: not ansible_check_mode
+      tags: [verify]
+    - name: Check that the deployed page contains the class title
+      ansible.builtin.assert:
+        that: class_title in class_http.content
+      when: not ansible_check_mode
+      tags: [verify]

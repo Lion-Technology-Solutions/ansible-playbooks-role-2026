@@ -1,0 +1,10 @@
+---
+class_environment: classroom
+class_title: LionTech Academy - Roles and Galaxy
+class_message: Welcome to the LionTech Ansible Roles and Galaxy class
+class_port: 8080
+class_root: /var/www/liontech_class
+class_user: liontech_lab
+class_packages:
+  - nginx
+  - curl

@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  author: LionTech Academy
+  description: Dedicated Ubuntu classroom baseline
+  license: MIT
+  min_ansible_version: '2.17'
+dependencies: []

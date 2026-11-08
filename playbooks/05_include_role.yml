@@ -1,0 +1,10 @@
+---
+- name: Demonstrate a dynamic role include on configured Ubuntu lab VMs
+  hosts: webservers
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Dynamically run the audit role
+      ansible.builtin.include_role:
+        name: audit
+      tags: [audit]

@@ -1,0 +1,3 @@
+---
+class_port: 8080
+class_root: /var/www/liontech_class

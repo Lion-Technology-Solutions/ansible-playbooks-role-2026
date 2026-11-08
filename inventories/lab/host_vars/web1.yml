@@ -1,0 +1,3 @@
+---
+# Overrides the role default on web1 only.
+class_accent: '#1262be'

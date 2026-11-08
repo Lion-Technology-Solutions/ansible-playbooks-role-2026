@@ -1,0 +1,18 @@
+---
+- name: Compare command and shell using harmless examples
+  hosts: all
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Execute a command without shell expansion
+      ansible.builtin.command:
+        argv: [printf, '%s\n', 'LionTech roles lab']
+      register: class_command
+      changed_when: false
+    - name: Use shell only because this example requires a pipeline
+      ansible.builtin.shell: printf '%s\n' 'LionTech' 'Ansible' | wc -l
+      register: class_shell
+      changed_when: false
+    - name: Explain stdout and return codes
+      ansible.builtin.debug:
+        msg: 'command stdout={{ class_command.stdout }}; pipeline rows={{ class_shell.stdout | trim }}; rc={{ class_shell.rc }}'

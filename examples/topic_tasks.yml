@@ -1,0 +1,5 @@
+---
+- name: Display each reusable lesson topic
+  ansible.builtin.debug:
+    msg: 'Reusable task: {{ item }}'
+  loop: '{{ class_topics }}'

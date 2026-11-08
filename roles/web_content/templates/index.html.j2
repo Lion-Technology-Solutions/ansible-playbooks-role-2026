@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>{{ class_title | e }}</title>
+<style>body{font-family:sans-serif;max-width:850px;margin:60px auto;color:#082c58}h1{color:{{ class_accent }}}</style>
+</head><body>
+<h1>{{ class_title | e }}</h1><p>{{ class_message | e }}</p>
+<p>Environment: {{ class_environment | e }}</p>
+<p>Managed host: {{ inventory_hostname | e }}</p>
+<p>OS: {{ ansible_facts['distribution'] | e }} {{ ansible_facts['distribution_version'] | e }}</p>
+<p>Port: {{ class_port }}</p><a href="assets/lesson.txt">Class resource</a>
+</body></html>

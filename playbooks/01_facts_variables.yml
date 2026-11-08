@@ -1,0 +1,28 @@
+---
+- name: Explain facts, variables, loops and registration without privilege
+  hosts: all
+  gather_facts: true
+  become: false
+  vars:
+    course_name: Ansible Roles and Galaxy
+    lesson_topics: [roles, handlers, variables, templates, galaxy]
+  tasks:
+    - name: Confirm Ansible connectivity
+      ansible.builtin.ping:
+    - name: Display selected facts and a play variable
+      ansible.builtin.debug:
+        msg: '{{ course_name }} on {{ inventory_hostname }} running {{ ansible_facts["distribution"] }}'
+    - name: Loop through class topics
+      ansible.builtin.debug:
+        msg: 'Today we demonstrate {{ item }}'
+      loop: '{{ lesson_topics }}'
+    - name: Run a read-only command and register its result
+      ansible.builtin.command: id -un
+      changed_when: false
+      register: class_login
+    - name: Set a derived host variable
+      ansible.builtin.set_fact:
+        class_summary: '{{ inventory_hostname }} connects as {{ class_login.stdout }}'
+    - name: Show the registered result and derived variable
+      ansible.builtin.debug:
+        var: class_summary

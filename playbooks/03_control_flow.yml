@@ -1,0 +1,24 @@
+---
+- name: Demonstrate includes, conditions and error recovery
+  hosts: all
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Load variables from a file
+      ansible.builtin.include_vars: ../examples/lesson_vars.yml
+    - name: Dynamically include a reusable task file
+      ansible.builtin.include_tasks: ../examples/topic_tasks.yml
+      when: class_show_topics | bool
+    - name: Demonstrate an intentional failure with recovery
+      block:
+        - name: Trigger an intentional classroom failure
+          ansible.builtin.fail:
+            msg: Planned demonstration - no system failure occurred
+      rescue:
+        - name: Explain rescue execution
+          ansible.builtin.debug:
+            msg: The failed block entered rescue; explain the original error before continuing.
+      always:
+        - name: Explain always execution
+          ansible.builtin.debug:
+            msg: This task runs whether the block succeeds or is rescued.

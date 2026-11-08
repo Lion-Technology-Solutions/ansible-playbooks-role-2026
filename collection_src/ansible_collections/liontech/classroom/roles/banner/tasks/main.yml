@@ -1,0 +1,11 @@
+---
+- name: Create the classroom banner directory
+  ansible.builtin.file:
+    path: '{{ banner_directory }}'
+    state: directory
+    mode: '0755'
+- name: Write a banner using a collection role
+  ansible.builtin.copy:
+    content: '{{ banner_message }}\n'
+    dest: '{{ banner_directory }}/galaxy-banner.txt'
+    mode: '0644'

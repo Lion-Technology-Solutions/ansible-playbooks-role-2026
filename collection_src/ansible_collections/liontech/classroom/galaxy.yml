@@ -1,0 +1,10 @@
+namespace: liontech
+name: classroom
+version: 1.0.0
+readme: README.md
+authors: [LionTech Academy]
+description: Classroom role demonstrating a locally built Ansible Galaxy collection.
+license: [MIT]
+tags: [education, linux]
+dependencies: {}
+repository: https://github.com/Lion-Technology-Solutions/ansible-playbooks-role-2026

@@ -1,0 +1,67 @@
+---
+- name: Practise file modules in a dedicated temporary directory
+  hosts: all
+  gather_facts: false
+  become: false
+  vars:
+    class_sandbox: /tmp/liontech_ansible_roles_lab
+  tasks:
+    - name: Create the sandbox directory
+      ansible.builtin.file:
+        path: '{{ class_sandbox }}'
+        state: directory
+        mode: '0755'
+    - name: Copy a source file from the controller
+      ansible.builtin.copy:
+        src: ../examples/config.txt
+        dest: '{{ class_sandbox }}/config.txt'
+        mode: '0644'
+    - name: Keep the original copied file unchanged and create an editable config
+      ansible.builtin.copy:
+        content: "environment=lab\ncolor=red\n"
+        dest: '{{ class_sandbox }}/editable.conf'
+        mode: '0644'
+        force: false
+    - name: Manage one configuration line
+      ansible.builtin.lineinfile:
+        path: '{{ class_sandbox }}/editable.conf'
+        regexp: '^environment='
+        line: environment=classroom
+    - name: Replace a controlled value
+      ansible.builtin.replace:
+        path: '{{ class_sandbox }}/editable.conf'
+        regexp: '^color=red$'
+        replace: color=blue
+    - name: Manage a marked configuration block
+      ansible.builtin.blockinfile:
+        path: '{{ class_sandbox }}/editable.conf'
+        block: |
+          instructor=Prof Prince
+          academy=LionTech
+    - name: Inspect file metadata
+      ansible.builtin.stat:
+        path: '{{ class_sandbox }}/editable.conf'
+      register: class_config
+    - name: Read file content as base64
+      ansible.builtin.slurp:
+        src: '{{ class_sandbox }}/editable.conf'
+      register: class_slurp
+    - name: Decode the slurped content
+      ansible.builtin.debug:
+        msg: '{{ class_slurp.content | b64decode }}'
+    - name: Find configuration files
+      ansible.builtin.find:
+        paths: '{{ class_sandbox }}'
+        patterns: '*.conf'
+      register: class_found
+    - name: Assert expected lab output
+      ansible.builtin.assert:
+        that:
+          - class_config.stat.exists
+          - class_found.matched | int >= 1
+          - "'environment=classroom' in (class_slurp.content | b64decode)"
+    - name: Fetch the config back to the controller
+      ansible.builtin.fetch:
+        src: '{{ class_sandbox }}/editable.conf'
+        dest: ../artifacts/files/
+        flat: false

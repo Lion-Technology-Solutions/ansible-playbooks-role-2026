@@ -1,0 +1,10 @@
+server {
+    listen {{ class_port }};
+    server_name _;
+    root {{ class_root }};
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}

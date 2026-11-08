@@ -1,0 +1,4 @@
+---
+class_user: liontech_lab
+class_root: /var/www/liontech_class
+class_packages: [nginx, curl]

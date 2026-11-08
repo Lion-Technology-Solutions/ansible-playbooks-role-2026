@@ -1,0 +1,7 @@
+---
+- name: Use a role installed from our Galaxy collection artifact
+  hosts: all
+  gather_facts: false
+  become: false
+  roles:
+    - role: liontech.classroom.banner

@@ -1,0 +1,35 @@
+---
+- name: Demonstrate notifications without needing a web server
+  hosts: all
+  gather_facts: false
+  become: false
+  vars:
+    handler_message: First configuration
+    handler_directory: /tmp/liontech_ansible_handlers_lab
+  tasks:
+    - name: Create the handlers sandbox
+      ansible.builtin.file:
+        path: '{{ handler_directory }}'
+        state: directory
+        mode: '0755'
+    - name: Manage a configuration and notify on changes
+      ansible.builtin.copy:
+        content: '{{ handler_message }}\n'
+        dest: '{{ handler_directory }}/application.conf'
+        mode: '0644'
+      notify: Apply classroom configuration
+    - name: Flush pending notifications now
+      ansible.builtin.meta: flush_handlers
+    - name: Check that a notified handler applied the configuration
+      ansible.builtin.stat:
+        path: '{{ handler_directory }}/applied.conf'
+      register: handler_result
+    - name: Verify the handler result
+      ansible.builtin.assert:
+        that: handler_result.stat.exists
+  handlers:
+    - name: Apply classroom configuration
+      ansible.builtin.copy:
+        content: '{{ handler_message }}\n'
+        dest: '{{ handler_directory }}/applied.conf'
+        mode: '0644'

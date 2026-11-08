@@ -1,0 +1,31 @@
+---
+- name: Refresh the Ubuntu package cache when it is older than one hour
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install the classroom packages
+  ansible.builtin.package:
+    name: '{{ class_packages }}'
+    state: present
+
+- name: Create the dedicated lab group
+  ansible.builtin.group:
+    name: '{{ class_user }}'
+    system: true
+
+- name: Create the dedicated lab service user
+  ansible.builtin.user:
+    name: '{{ class_user }}'
+    group: '{{ class_user }}'
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Create the website directory
+  ansible.builtin.file:
+    path: '{{ class_root }}'
+    state: directory
+    owner: '{{ class_user }}'
+    group: '{{ class_user }}'
+    mode: '0755'

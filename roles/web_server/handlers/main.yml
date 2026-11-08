@@ -1,0 +1,12 @@
+---
+# Both handlers listen to the same notification, and execute in definition order.
+- name: Validate the complete Nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  listen: Reload classroom nginx
+
+- name: Reload Nginx after configuration validation
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  listen: Reload classroom nginx
