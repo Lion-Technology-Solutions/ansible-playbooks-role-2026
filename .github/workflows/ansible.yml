@@ -25,7 +25,7 @@ jobs:
       - run: |
           for playbook in access-management/*.yml; do
             case "$playbook" in
-              *requirements.yml|*users.yml) continue ;;
+              access-management/requirements.yml|access-management/users.yml) continue ;;
             esac
             ansible-playbook "$playbook" --syntax-check
           done

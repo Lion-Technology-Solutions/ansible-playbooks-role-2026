@@ -104,7 +104,10 @@ def main():
             authorized = home / '.ssh/authorized_keys'
             assert authorized.stat().st_mode & 0o777 == 0o600
             assert Path(user['public_key_file']).read_text().strip() in authorized.read_text()
-            assert not any('PRIVATE KEY' in f.read_text(errors='ignore') for f in home.rglob('*') if f.is_file())
+            private_header = re.compile(r'-----BEGIN (?:OPENSSH |RSA |EC |DSA |ENCRYPTED )?PRIVATE KEY-----')
+            for candidate in home.rglob('*'):
+                if candidate.is_file():
+                    assert not private_header.search(candidate.read_text(errors='ignore')), f'Private key found at {candidate}'
         # Build known_hosts from our own generated host key, not unverified ssh-keyscan output.
         known = base / 'known_hosts'
         public = Path(str(host_key) + '.pub').read_text().split()
