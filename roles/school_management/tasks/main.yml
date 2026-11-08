@@ -115,9 +115,3 @@
   retries: 10
   delay: 2
   when: not ansible_check_mode
-
-- name: Display application address and credential instructions
-  ansible.builtin.debug:
-    msg:
-      - 'School: http://{{ ansible_host | default(inventory_hostname) }}:{{ school_port }}'
-      - 'Admin username: admin. On this host run: sudo python3 -c "import json; print(json.load(open(\"/etc/liontech-school/secrets.json\"))[\"password\"])"'

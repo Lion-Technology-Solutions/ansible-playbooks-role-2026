@@ -12,3 +12,26 @@
       ansible.builtin.debug:
         msg: 'Skipped {{ inventory_hostname }}: this role targets Ubuntu only.'
       when: ansible_facts['distribution'] != 'Ubuntu'
+  post_tasks:
+    - name: Read school credentials after successful application verification
+      ansible.builtin.slurp:
+        src: /etc/liontech-school/secrets.json
+      register: school_login_credentials
+      no_log: true
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - not ansible_check_mode
+        - school_show_admin_password | bool
+
+    - name: Display successful school deployment and admin login
+      ansible.builtin.debug:
+        msg:
+          - 'Deployment successful on {{ inventory_hostname }}'
+          - 'School: http://{{ ansible_host | default(inventory_hostname) }}:{{ school_port }}'
+          - 'Admin login: http://{{ ansible_host | default(inventory_hostname) }}:{{ school_port }}/login'
+          - 'Admin username: admin'
+          - "Admin password: {{ (school_login_credentials.content | b64decode | from_json).password if school_show_admin_password | bool else 'hidden (school_show_admin_password=false)' }}"
+          - 'Students create their own portal at /register and sign in at /student/login'
+      when:
+        - ansible_facts['distribution'] == 'Ubuntu'
+        - not ansible_check_mode

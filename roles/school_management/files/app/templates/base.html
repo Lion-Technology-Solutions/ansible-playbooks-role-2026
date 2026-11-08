@@ -1,5 +1,5 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ brand.brand }} | School Management</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
-<body><header><a class="logo" href="/">L<span>T</span> <strong>{{ brand.brand }}</strong></a><nav><a href="/">Student portal</a><a href="/admin">Administration</a></nav></header>
+<body><header><a class="logo" href="/">L<span>T</span> <strong>{{ brand.brand }}</strong></a><nav><a href="/portal">My portal</a><a href="/register">Register</a><a href="/admin">Administration</a></nav></header>
 <main>{% for message in get_flashed_messages() %}<p class="notice" role="status">{{ message }}</p>{% endfor %}{% block content %}{% endblock %}</main>
 <footer><strong>{{ brand.brand }}</strong><p>Build skills. Complete projects. Grow your future.</p><a href="{{ brand.website }}" target="_blank" rel="noopener">{{ brand.website }}</a> · <a href="tel:+{{ brand.whatsapp }}">{{ brand.phone }}</a><p>Classroom demonstration · Each host stores its own school records.</p></footer></body></html>

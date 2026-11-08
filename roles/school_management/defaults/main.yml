@@ -6,3 +6,4 @@ school_whatsapp: '16473818836'
 school_website: https://www.liontechacademy.com
 school_completion_message: Project completed
 school_secure_cookie: false
+school_show_admin_password: true

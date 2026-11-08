@@ -37,6 +37,9 @@ class SchoolTest(unittest.TestCase):
         cls.tmp.cleanup()
 
     def setUp(self):
+        with self.module.database() as db:
+            db.execute('DELETE FROM students')
+            db.execute('DELETE FROM courses')
         self.client = self.module.app.test_client()
 
     def token(self, path='/login'):
@@ -48,6 +51,109 @@ class SchoolTest(unittest.TestCase):
 
     def post(self, **fields):
         return self.client.post('/admin', data=dict(csrf=self.token('/admin'), **fields), follow_redirects=True)
+
+    def register_student(self, client, name, email, password='student-password'):
+        page = client.get('/register').get_data(as_text=True)
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page)[1]
+        return client.post('/register', data=dict(csrf=csrf, name=name, email=email,
+                          password=password, confirm_password=password), follow_redirects=True)
+
+    def student_post(self, client, **fields):
+        page = client.get('/portal').get_data(as_text=True)
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page)[1]
+        return client.post('/portal', data=dict(csrf=csrf, **fields), follow_redirects=True)
+
+    def test_student_portals_and_admin_results(self):
+        self.login()
+        self.post(action='course', name='DevOps Project')
+        alice = self.module.app.test_client()
+        bob = self.module.app.test_client()
+        self.assertIn(b'Your student portal is ready', self.register_student(alice, 'Alice', 'alice@example.com').data)
+        self.register_student(bob, 'Bob', 'bob@example.com')
+        self.student_post(alice, action='enroll', course_id='1')
+        self.student_post(alice, action='submit', course_id='1', student_id='2', title='Alice Private Project',
+                          project_url='https://github.com/example/alice', notes='Built with Ansible')
+        self.assertIn(b'Alice Private Project', alice.get('/portal').data)
+        self.assertNotIn(b'Alice Private Project', bob.get('/portal').data)
+        self.assertEqual(bob.get('/admin').status_code, 302)
+        self.assertEqual(alice.post('/admin', data={'action':'grade'}).status_code, 400)
+        self.assertIn(b'Alice Private Project', self.client.get('/admin').data)
+        self.post(action='grade', student_id='1', course_id='1', score='92', feedback='Excellent automation')
+        page = alice.get('/portal').data
+        self.assertIn(b'92/100', page)
+        self.assertIn(b'Excellent automation', page)
+        self.post(action='grade', student_id='1', course_id='1', score='101', feedback='Invalid')
+        self.assertIn(b'92/100', alice.get('/portal').data)
+        self.student_post(alice, action='submit', course_id='1', title='Revised Project',
+                          project_url='https://github.com/example/alice', notes='Updated')
+        self.assertIn(b'Awaiting review', alice.get('/portal').data)
+        self.assertNotIn(b'92/100', alice.get('/portal').data)
+        # Students cannot submit to an unenrolled course or set their own grades.
+        self.assertEqual(self.student_post(bob, action='submit', course_id='1', title='Fake',
+                         project_url='https://example.com', notes='').status_code, 403)
+        self.assertEqual(self.student_post(alice, action='grade', course_id='1', score='100').status_code, 400)
+        with self.module.database() as db:
+            self.assertEqual(db.execute('SELECT student_id FROM submissions').fetchone()[0], 1)
+            self.assertIsNone(db.execute('SELECT score FROM submissions').fetchone()[0])
+            stored = db.execute('SELECT password_hash FROM student_accounts WHERE student_id=1').fetchone()[0]
+            self.assertNotIn('student-password', stored)
+        self.post(action='unenroll', student_id='1', course_id='1')
+        with self.module.database() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM submissions').fetchone()[0], 0)
+
+    def test_registration_login_and_existing_student_access(self):
+        learner = self.module.app.test_client()
+        self.assertEqual(learner.get('/portal').status_code, 302)
+        self.assertEqual(learner.post('/register', data={}).status_code, 400)
+        bad = self.register_student(learner, 'Invalid', 'bad-email')
+        self.assertEqual(bad.status_code, 400)
+        self.register_student(learner, 'New Student', 'new@example.com')
+        duplicate = self.module.app.test_client()
+        self.assertEqual(self.register_student(duplicate, 'Impersonator', 'new@example.com').status_code, 409)
+        self.login()
+        self.post(action='student', name='Existing Student', email='existing@example.com')
+        self.assertEqual(self.register_student(duplicate, 'Impersonator', 'existing@example.com').status_code, 409)
+        self.post(action='portal_password', student_id='2', password='temporary-password')
+        page = duplicate.get('/student/login').get_data(as_text=True)
+        csrf = re.search(r'name="csrf" value="([^"]+)"', page)[1]
+        bad_login = duplicate.post('/student/login', data=dict(csrf=csrf, email='existing@example.com', password='wrong'))
+        self.assertIn(b'Invalid email or password', bad_login.data)
+        good = duplicate.post('/student/login', data=dict(csrf=csrf, email='existing@example.com', password='temporary-password'), follow_redirects=True)
+        self.assertIn(b'Hello, Existing Student', good.data)
+        self.assertNotIn(b'Hello, New Student', good.data)
+        self.post(action='portal_password', student_id='2', password='another-password')
+        self.assertEqual(duplicate.get('/portal').status_code, 302)
+        # Deleting and reusing a student id must not grant an old session access.
+        with self.module.database() as db:
+            db.execute('DELETE FROM students WHERE id=1')
+            db.execute('INSERT INTO students VALUES(1, ?, ?)', ('Replacement', 'replacement@example.com'))
+            db.execute('INSERT INTO student_accounts VALUES(1, ?)',
+                       (self.module.generate_password_hash('new-password', method='pbkdf2:sha256:600000'),))
+        self.assertEqual(learner.get('/portal').status_code, 302)
+
+    def test_upgrade_preserves_existing_records(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            for filename in ['config.json', 'secrets.json']:
+                (base / filename).write_text((Path(self.tmp.name) / filename).read_text())
+            with sqlite3.connect(base / 'school.sqlite3') as db:
+                db.executescript("""CREATE TABLE students(id INTEGER PRIMARY KEY,name TEXT NOT NULL,email TEXT NOT NULL UNIQUE);
+                    CREATE TABLE courses(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE);
+                    CREATE TABLE enrollments(student_id INTEGER REFERENCES students(id) ON DELETE CASCADE,
+                    course_id INTEGER REFERENCES courses(id) ON DELETE CASCADE,PRIMARY KEY(student_id,course_id));
+                    INSERT INTO students VALUES(7,'Retained Student','retained@example.com');
+                    INSERT INTO courses VALUES(8,'Retained Course'); INSERT INTO enrollments VALUES(7,8);""")
+            env = {**os.environ, 'SCHOOL_CONFIG_DIR': temp, 'SCHOOL_DATA_DIR': temp,
+                   'PYTHONDONTWRITEBYTECODE': '1'}
+            for _ in range(2):
+                subprocess.run([sys.executable, '-c', 'import app'], cwd=ROOT / 'roles/school_management/files/app',
+                               env=env, check=True, capture_output=True)
+            with sqlite3.connect(base / 'school.sqlite3') as db:
+                self.assertEqual(db.execute('SELECT name FROM students WHERE id=7').fetchone()[0], 'Retained Student')
+                self.assertEqual(db.execute('SELECT * FROM enrollments').fetchall(), [(7, 8)])
+                self.assertEqual(db.execute('SELECT count(*) FROM student_accounts').fetchone()[0], 0)
+                self.assertEqual(db.execute('SELECT count(*) FROM submissions').fetchone()[0], 0)
 
     def test_waitress_http_server(self):
         with socket.socket() as listener:

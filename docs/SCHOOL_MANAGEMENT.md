@@ -8,6 +8,8 @@ This project adds `school_management.yml` and the reusable `roles/school_managem
 - Opens `https://wa.me/16473818836?text=Project+completed`; the student taps **Send** in WhatsApp. The app never sends messages automatically or verifies completion.
 - LionTech Academy blue/gold branding, website `https://www.liontechacademy.com`, phone `+1 (647) 381-8836`.
 - Admin login; add/delete students and courses, enroll/unenroll students, and display counts.
+- Students create personal accounts, join courses, submit project links/notes, and view scores and feedback.
+- Administrators see student portals and submissions, publish scores out of 100, and enable/reset portal passwords for existing students. Student passwords are hashed; password resets invalidate existing student sessions.
 - SQLite persistence across service restarts and repeated Ansible runs. Each host has its **own independent database**; this is not a synchronized cluster.
 - Random per-host admin credentials, CSRF protection, escaped HTML and parameterized SQL.
 
@@ -54,7 +56,11 @@ The role checks `/health` locally on each host; this does not prove your compute
 
 ## 3. Sign in as administrator
 
-The student portal and WhatsApp button do not need a login. For school records choose **Administration**, use username `admin`, and retrieve that host's generated password over SSH:
+After a successful real deployment, the playbook prints each Ubuntu host's URL, admin username (`admin`), and generated **school application password**. It prints no credentials in `--check` mode or for hosts that fail deployment/health verification. The generated password is preserved when you redeploy. This password is separate from SSH/sudo authentication.
+
+To hide passwords in shared logs, pass `-e school_show_admin_password=false`. The CI workflow does this and tests the default display behavior with captured output. The session signing key is never included in the summary.
+
+For school records choose **Administration** and use the displayed password. You can also retrieve that host's password over SSH:
 
 ```bash
 sudo python3 -c 'import json; print(json.load(open("/etc/liontech-school/secrets.json"))["password"])'
@@ -62,11 +68,24 @@ sudo python3 -c 'import json; print(json.load(open("/etc/liontech-school/secrets
 
 Credentials are created once and retained on repeated deployment. Password/session secret live in a root-owned file readable by the service group. Do not commit that file or student databases. To rotate the password, edit its `password` field on the host, then restart `liontech-school`; rotate `secret_key` too to invalidate existing sessions.
 
+### Student portals and results
+
+1. The administrator adds courses at `/admin`.
+2. Students select **Register** at `/register`, enter their name/email and choose a password of 10–128 characters. This creates their own student record and portal.
+3. Students sign in at `/student/login`, join a course, and submit a project title, http(s) project/GitHub link, and optional notes from `/portal`.
+4. Administrators open **Student submissions & results**, review the project link/notes, enter a score from 0 to 100 and feedback, then select **Publish result to student portal**.
+5. Students see their own results and feedback in their portal. Updating a project submission returns it to **Awaiting review** and clears its previous score until the administrator reviews it again.
+
+Students cannot read other students' records or publish grades. Registration cannot take over an existing email address: for records already created by an administrator, use **Student portal access → Enable portal** to set a password and share it with the student. The same section resets passwords. Deleting a student, course or enrollment also removes its associated submissions/results.
+
+These are project scores entered by administrators, not an automatic exam-grading system. Self-registration does not verify email ownership. Every host remains independent, so students must use the same host URL to return to their own account.
+
 ## 4. Override branding or port
 
 The defaults are in `roles/school_management/defaults/main.yml`. Set variables in your inventory's group vars, or an external vars file:
 
 ```yaml
+school_show_admin_password: true  # Show the application password after a successful deployment
 school_port: 8081
 school_brand: LionTech Academy
 school_phone: '+1 (647) 381-8836'
@@ -103,6 +122,6 @@ python scripts/test_school_management.py
 ansible-playbook school_management.yml --syntax-check
 ```
 
-Functional tests use a temporary SQLite database and check login, CSRF, student/course registration, enrollment, deletion, persistence across clients, escaped output, health and the exact WhatsApp destination/message. GitHub Actions also deploys the actual role twice on Ubuntu 24.04 and checks the repeat recap for `changed=0`.
+Functional tests use temporary SQLite databases and check admin/student login, self-registration, hashed passwords, CSRF, student/course registration, enrollment, project submission, grading, student isolation, password reset, deletion, preservation of existing records on schema upgrade, escaped output, health and the exact WhatsApp destination/message. The Ubuntu integration test also verifies that the requested admin password appears after success, stays hidden when disabled/in check mode, and never exposes the session signing key. GitHub Actions also deploys the actual role twice on Ubuntu 24.04 and checks the repeat recap for `changed=0`.
 
 References: [Ansible roles](https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_reuse_roles.html), [systemd service module](https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/systemd_service_module.html), [Flask with Waitress](https://flask.palletsprojects.com/en/stable/deploying/waitress/).

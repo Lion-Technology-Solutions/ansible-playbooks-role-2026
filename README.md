@@ -1,6 +1,6 @@
 # LionTech Academy | Ansible Roles & Galaxy
 
-**School management project:** [Deploy the LionTech school app to all Ubuntu hosts](docs/SCHOOL_MANAGEMENT.md). Includes a reusable role, student/course/enrollment records, an admin login, and a student WhatsApp **Project completed** button. Run `ansible-playbook -i /path/to/your/terraform-inventory.ini school_management.yml`.
+**School management project:** [Deploy the LionTech school app to all Ubuntu hosts](docs/SCHOOL_MANAGEMENT.md). Includes a reusable role, student self-registration and portals, project submissions and admin-published results, student/course/enrollment records, an admin login displayed after successful deployment, and a student WhatsApp **Project completed** button. Run `ansible-playbook -i /path/to/your/terraform-inventory.ini school_management.yml`.
 
 **New class project:** [Deploy five named users and verify SSH access across your Terraform-managed fleet](access-management/README.md). Includes Paul, Elvis, John, George and Mercy, optional sudo, prompted input, public-key authentication and local SSH client configuration.
 
