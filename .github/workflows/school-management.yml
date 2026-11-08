@@ -1,0 +1,29 @@
+name: School management checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  school-app:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-controller.txt Flask==3.1.2 waitress==3.0.2
+      - run: python scripts/test_school_management.py
+      - run: ansible-playbook school_management.yml --syntax-check
+      - name: Deploy role on disposable Ubuntu runner
+        run: ansible-playbook -i localhost, -c local school_management.yml
+      - name: Verify unchanged repeat deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          ansible-playbook -i localhost, -c local school_management.yml | tee /tmp/school-repeat.log
+          python - <<'PY'
+          import pathlib, re
+          recap = pathlib.Path('/tmp/school-repeat.log').read_text().split('PLAY RECAP')[-1]
+          assert re.search(r'changed=0\b', recap), recap
+          assert re.search(r'failed=0\b', recap), recap
+          PY
+      - run: curl --fail http://127.0.0.1:8081/health

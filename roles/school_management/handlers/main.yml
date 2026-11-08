@@ -1,0 +1,7 @@
+---
+- name: Restart LionTech school
+  ansible.builtin.systemd_service:
+    name: liontech-school
+    daemon_reload: true
+    state: restarted
+  when: not ansible_check_mode

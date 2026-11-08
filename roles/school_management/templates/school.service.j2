@@ -1,0 +1,21 @@
+[Unit]
+Description=LionTech School Management
+After=network.target
+
+[Service]
+User=liontech-school
+Group=liontech-school
+WorkingDirectory=/opt/liontech-school
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m waitress --listen=0.0.0.0:{{ school_port }} --threads=4 app:app
+Restart=on-failure
+RestartSec=3
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/liontech-school
+
+[Install]
+WantedBy=multi-user.target

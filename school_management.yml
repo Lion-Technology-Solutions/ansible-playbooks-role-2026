@@ -1,0 +1,14 @@
+---
+- name: Deploy LionTech School Management to every Ubuntu inventory host
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Deploy the school application on Ubuntu
+      ansible.builtin.import_role:
+        name: school_management
+      when: ansible_facts['distribution'] == 'Ubuntu'
+    - name: Explain hosts skipped by this Ubuntu deployment
+      ansible.builtin.debug:
+        msg: 'Skipped {{ inventory_hostname }}: this role targets Ubuntu only.'
+      when: ansible_facts['distribution'] != 'Ubuntu'

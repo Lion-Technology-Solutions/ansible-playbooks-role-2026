@@ -1,0 +1,123 @@
+---
+- name: Validate Ubuntu and school settings
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Ubuntu'
+      - school_port | int >= 1024
+      - school_port | int <= 65535
+      - school_whatsapp is match('^[1-9][0-9]{7,14}$')
+      - school_website is match('^https://')
+    fail_msg: Use Ubuntu, an unprivileged TCP port and an international WhatsApp number containing digits only.
+
+- name: Install Ubuntu application packages
+  ansible.builtin.apt:
+    name: [python3, python3-flask, python3-waitress]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the application group
+  ansible.builtin.group:
+    name: liontech-school
+    system: true
+
+- name: Create the unprivileged application account
+  ansible.builtin.user:
+    name: liontech-school
+    group: liontech-school
+    system: true
+    create_home: false
+    home: /var/lib/liontech-school
+    shell: /usr/sbin/nologin
+
+- name: Create application and configuration directories
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: liontech-school
+    mode: '0750'
+  loop: [/opt/liontech-school, /etc/liontech-school]
+
+- name: Create persistent database directory
+  ansible.builtin.file:
+    path: /var/lib/liontech-school
+    state: directory
+    owner: liontech-school
+    group: liontech-school
+    mode: '0750'
+
+- name: Generate persistent credentials once without logging them
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/python3
+      - -c
+      - |
+        import json, os, secrets
+        os.umask(0o027)
+        with open('/etc/liontech-school/secrets.json', 'x') as f:
+            json.dump({'password': secrets.token_urlsafe(24), 'secret_key': secrets.token_hex(32)}, f)
+    creates: /etc/liontech-school/secrets.json
+  no_log: true
+
+- name: Set credential ownership and permissions
+  ansible.builtin.file:
+    path: /etc/liontech-school/secrets.json
+    owner: root
+    group: liontech-school
+    mode: '0640'
+
+- name: Install application code and HTML assets
+  ansible.builtin.copy:
+    src: app/
+    dest: /opt/liontech-school/
+    owner: root
+    group: liontech-school
+    mode: '0640'
+    directory_mode: '0750'
+  notify: Restart LionTech school
+
+- name: Render branding configuration
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: /etc/liontech-school/config.json
+    owner: root
+    group: liontech-school
+    mode: '0640'
+  notify: Restart LionTech school
+
+- name: Install hardened systemd service
+  ansible.builtin.template:
+    src: school.service.j2
+    dest: /etc/systemd/system/liontech-school.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart LionTech school
+
+- name: Enable and start school service
+  ansible.builtin.systemd_service:
+    name: liontech-school
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: not ansible_check_mode
+
+- name: Apply notified restarts before verification
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the application and database on each Ubuntu host
+  ansible.builtin.uri:
+    url: 'http://127.0.0.1:{{ school_port }}/health'
+    status_code: 200
+  register: school_health
+  until: school_health.status == 200
+  retries: 10
+  delay: 2
+  when: not ansible_check_mode
+
+- name: Display application address and credential instructions
+  ansible.builtin.debug:
+    msg:
+      - 'School: http://{{ ansible_host | default(inventory_hostname) }}:{{ school_port }}'
+      - 'Admin username: admin. On this host run: sudo python3 -c "import json; print(json.load(open(\"/etc/liontech-school/secrets.json\"))[\"password\"])"'
