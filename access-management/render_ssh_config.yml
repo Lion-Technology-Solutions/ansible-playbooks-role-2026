@@ -1,0 +1,27 @@
+---
+- name: Generate a local SSH client config from existing Terraform host entries
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+  vars:
+    login_username: paul
+    login_private_key_file: '{{ lookup("env", "HOME") }}/.ssh/liontech_paul'
+    client_ssh_config: '{{ playbook_dir }}/../artifacts/ssh_config_{{ login_username }}'
+  tasks:
+    - name: Validate the local configuration username
+      ansible.builtin.assert:
+        that: login_username is match('^[a-z_][a-z0-9_-]{0,30}$')
+    - name: Create the output directory on this controller
+      ansible.builtin.file:
+        path: '{{ client_ssh_config | dirname }}'
+        state: directory
+        mode: '0700'
+    - name: Render host aliases with a consistent named-user login
+      ansible.builtin.template:
+        src: ssh_client_config.j2
+        dest: '{{ client_ssh_config }}'
+        mode: '0600'
+    - name: Show the generated configuration path
+      ansible.builtin.debug:
+        msg: 'Use ssh -F {{ client_ssh_config }} liontech-INVENTORY_ALIAS. No inventory or private key was changed.'

@@ -1,0 +1,14 @@
+# LionTech local client settings; private keys stay on this computer.
+{% for server in groups['all'] | sort %}
+Host liontech-{{ server }}
+    HostName {{ hostvars[server].ansible_host | default(server) }}
+    User {{ login_username }}
+    Port {{ hostvars[server].ansible_port | default(22) }}
+    IdentityFile "{{ login_private_key_file | expanduser }}"
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+{% if client_proxy_jump is defined %}
+    ProxyJump {{ client_proxy_jump }}
+{% endif %}
+
+{% endfor %}

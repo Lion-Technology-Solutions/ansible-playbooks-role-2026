@@ -1,0 +1,6 @@
+---
+managed_ssh_users: []
+ssh_accounts_home_base: /home
+ssh_team_group: liontech_students
+ssh_team_workspace: /srv/liontech/team
+ssh_sudoers_directory: /etc/sudoers.d

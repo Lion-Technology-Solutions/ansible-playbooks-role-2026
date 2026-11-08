@@ -1,5 +1,7 @@
 # LionTech Academy | Ansible Roles & Galaxy
 
+**New class project:** [Deploy five named users and verify SSH access across your Terraform-managed fleet](access-management/README.md). Includes Paul, Elvis, John, George and Mercy, optional sudo, prompted input, public-key authentication and local SSH client configuration.
+
 **With Prof Prince · Complete instructor demonstration and student lab project**
 
 Build a reusable Nginx website deployment, understand role dependencies and handlers, then build and install your own Galaxy collection. Six local practice labs work without cloud servers. The full deployment targets disposable Ubuntu VMs.

@@ -1,0 +1,23 @@
+---
+- name: Prompt for one student account using existing bootstrap inventory
+  hosts: all
+  gather_facts: true
+  become: true
+  serial: '{{ rollout_batch_size | default(5) }}'
+  any_errors_fatal: true
+  vars_prompt:
+    - name: student_username
+      prompt: 'Linux username to deploy (lowercase, for example paul)'
+      private: false
+    - name: student_public_key_file
+      prompt: 'Absolute path to the student PUBLIC .pub key on this controller'
+      private: false
+  vars:
+    managed_ssh_users:
+      - name: '{{ student_username }}'
+        public_key_file: '{{ student_public_key_file | expanduser }}'
+        sudo_enabled: false
+  roles:
+    - role: managed_accounts
+    - role: ssh_public_key_auth
+      when: configure_ssh_public_key_auth | default(true) | bool

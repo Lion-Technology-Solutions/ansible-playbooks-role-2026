@@ -12,3 +12,22 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements-controller.txt
       - run: bash scripts/test.sh
+  ssh-access-lab:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-controller.txt
+      - run: sudo apt-get update && sudo apt-get install -y openssh-server sudo
+      - run: ansible-galaxy collection install -r access-management/requirements.yml -p vendor/collections
+      - run: |
+          for playbook in access-management/*.yml; do
+            case "$playbook" in
+              *requirements.yml|*users.yml) continue ;;
+            esac
+            ansible-playbook "$playbook" --syntax-check
+          done
+      - run: sudo env "PATH=$PATH" python3 scripts/test_access_management.py
+      - run: python3 scripts/test_access_inputs.py

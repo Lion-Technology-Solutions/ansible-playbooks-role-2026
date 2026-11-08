@@ -1,0 +1,6 @@
+---
+ssh_daemon_config: /etc/ssh/sshd_config
+ssh_daemon_include_directory: /etc/ssh/sshd_config.d
+ssh_daemon_service: '{{ "ssh" if ansible_facts["os_family"] == "Debian" else "sshd" }}'
+ssh_daemon_fragment_validation: /usr/sbin/sshd -t -f %s
+ssh_daemon_reload_enabled: true

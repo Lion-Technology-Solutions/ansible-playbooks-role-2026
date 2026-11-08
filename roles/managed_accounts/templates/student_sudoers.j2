@@ -1,0 +1,2 @@
+# Managed by LionTech Ansible. Review sudo_enabled and sudo_nopasswd in users.yml.
+{{ item.name }} ALL=(ALL:ALL) {{ 'NOPASSWD:' if item.sudo_nopasswd | default(false) | bool else 'PASSWD:' }} ALL

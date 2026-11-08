@@ -1,0 +1,126 @@
+---
+- name: Validate all account inputs first
+  ansible.builtin.import_tasks: validate.yml
+- name: Require supported Linux families
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['system'] == 'Linux'
+      - ansible_facts['os_family'] in ['Debian', 'RedHat']
+- name: Inspect existing passwd entries before assigning account homes
+  ansible.builtin.getent:
+    database: passwd
+- name: Protect existing system accounts and nonstandard homes
+  ansible.builtin.assert:
+    that:
+      - item.name not in ansible_facts.getent_passwd or (ansible_facts.getent_passwd[item.name][1] | int >= 1000)
+      - item.name not in ansible_facts.getent_passwd or ansible_facts.getent_passwd[item.name][4] == ssh_accounts_home_base ~ '/' ~ item.name
+    fail_msg: This username already belongs to a system account or has a different home. Review it before deploying.
+  loop: '{{ managed_ssh_users }}'
+  loop_control:
+    label: '{{ item.name }}'
+- name: Inspect sudo availability before invoking a package manager
+  ansible.builtin.stat:
+    path: /usr/sbin/visudo
+  register: sudo_validator
+- name: Install sudo when it is not already available
+  ansible.builtin.package:
+    name: sudo
+    state: present
+  when: not sudo_validator.stat.exists
+- name: Create the shared student group
+  ansible.builtin.group:
+    name: '{{ ssh_team_group }}'
+    state: present
+- name: Create private primary groups
+  ansible.builtin.group:
+    name: '{{ item.name }}'
+    state: present
+  loop: '{{ managed_ssh_users }}'
+- name: Create SSH accounts and add shared-workspace membership
+  ansible.builtin.user:
+    name: '{{ item.name }}'
+    comment: '{{ item.comment | default(item.name) }}'
+    group: '{{ item.name }}'
+    groups: '{{ ssh_team_group }}'
+    append: true
+    home: '{{ ssh_accounts_home_base }}/{{ item.name }}'
+    create_home: true
+    shell: /bin/bash
+    password_lock: true
+    state: present
+  loop: '{{ managed_ssh_users }}'
+  loop_control:
+    label: '{{ item.name }}'
+- name: Set private home directory permissions
+  ansible.builtin.file:
+    path: '{{ ssh_accounts_home_base }}/{{ item.name }}'
+    state: directory
+    owner: '{{ item.name }}'
+    group: '{{ item.name }}'
+    mode: '0700'
+  loop: '{{ managed_ssh_users }}'
+- name: Install PUBLIC keys without deleting other existing keys
+  ansible.posix.authorized_key:
+    user: '{{ item.name }}'
+    key: '{{ lookup("ansible.builtin.file", item.public_key_file) }}'
+    state: present
+    manage_dir: true
+    exclusive: false
+  loop: '{{ managed_ssh_users }}'
+  loop_control:
+    label: '{{ item.name }}'
+- name: Enforce private SSH directory permissions
+  ansible.builtin.file:
+    path: '{{ ssh_accounts_home_base }}/{{ item.name }}/.ssh'
+    state: directory
+    owner: '{{ item.name }}'
+    group: '{{ item.name }}'
+    mode: '0700'
+  loop: '{{ managed_ssh_users }}'
+- name: Enforce authorized_keys ownership and permissions
+  ansible.builtin.file:
+    path: '{{ ssh_accounts_home_base }}/{{ item.name }}/.ssh/authorized_keys'
+    state: file
+    owner: '{{ item.name }}'
+    group: '{{ item.name }}'
+    mode: '0600'
+  loop: '{{ managed_ssh_users }}'
+- name: Restore SSH file SELinux labels where SELinux is enabled
+  ansible.builtin.command:
+    argv: [/usr/sbin/restorecon, -Rv, '{{ ssh_accounts_home_base }}/{{ item.name }}/.ssh']
+  register: restored_labels
+  changed_when: restored_labels.stdout | length > 0
+  when: ansible_facts.get('selinux', {}).get('status', 'disabled') == 'enabled'
+  loop: '{{ managed_ssh_users }}'
+- name: Ensure the sudo policy directory exists
+  ansible.builtin.file:
+    path: '{{ ssh_sudoers_directory }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+- name: Write validated sudo policies for selected administrators
+  ansible.builtin.template:
+    src: student_sudoers.j2
+    dest: '{{ ssh_sudoers_directory }}/90-liontech-user-{{ item.name }}'
+    owner: root
+    group: root
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s
+  when: item.sudo_enabled | default(false) | bool
+  loop: '{{ managed_ssh_users }}'
+  loop_control:
+    label: '{{ item.name }}'
+- name: Remove only this role's sudo policy for non-administrators
+  ansible.builtin.file:
+    path: '{{ ssh_sudoers_directory }}/90-liontech-user-{{ item.name }}'
+    state: absent
+  when: not (item.sudo_enabled | default(false) | bool)
+  loop: '{{ managed_ssh_users }}'
+- name: Create a shared workspace with inherited group ownership
+  ansible.builtin.file:
+    path: '{{ ssh_team_workspace }}'
+    state: directory
+    owner: root
+    group: '{{ ssh_team_group }}'
+    mode: '2770'

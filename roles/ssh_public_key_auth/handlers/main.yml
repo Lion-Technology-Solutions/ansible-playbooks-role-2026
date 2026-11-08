@@ -1,0 +1,12 @@
+---
+- name: Validate SSH daemon before reload
+  ansible.builtin.command:
+    argv: [/usr/sbin/sshd, -t, -f, '{{ ssh_daemon_config }}']
+  changed_when: false
+  listen: Reload validated SSH daemon
+- name: Reload SSH daemon
+  ansible.builtin.service:
+    name: '{{ ssh_daemon_service }}'
+    state: reloaded
+  when: ssh_daemon_reload_enabled | bool
+  listen: Reload validated SSH daemon

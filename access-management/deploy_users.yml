@@ -1,0 +1,19 @@
+---
+- name: Provision named SSH accounts using Terraform inventory bootstrap logins
+  hosts: all
+  gather_facts: true
+  become: true
+  serial: '{{ rollout_batch_size | default(5) }}'
+  any_errors_fatal: true
+  vars_files:
+    - '{{ users_file | default(playbook_dir ~ "/users.yml") }}'
+  roles:
+    - role: managed_accounts
+    - role: ssh_public_key_auth
+      when: configure_ssh_public_key_auth | default(true) | bool
+  post_tasks:
+    - name: Apply validated SSH changes before ending the batch
+      ansible.builtin.meta: flush_handlers
+    - name: Explain the next login verification step
+      ansible.builtin.debug:
+        msg: 'Accounts ready on {{ inventory_hostname }}. Verify each user with verify_user_login.yml using their own private key.'

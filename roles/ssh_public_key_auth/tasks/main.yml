@@ -1,0 +1,41 @@
+---
+- name: Check the existing SSH daemon configuration before changing it
+  ansible.builtin.command:
+    argv: [/usr/sbin/sshd, -t, -f, '{{ ssh_daemon_config }}']
+  changed_when: false
+- name: Create the SSH configuration include directory
+  ansible.builtin.file:
+    path: '{{ ssh_daemon_include_directory }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+- name: Write and validate a narrowly scoped public-key authentication setting
+  ansible.builtin.copy:
+    content: "# LionTech named-user SSH authentication\nPubkeyAuthentication yes\n"
+    dest: '{{ ssh_daemon_include_directory }}/40-liontech-public-key.conf'
+    owner: root
+    group: root
+    mode: '0644'
+    validate: '{{ ssh_daemon_fragment_validation }}'
+  notify: Reload validated SSH daemon
+- name: Include the managed setting in global scope before Match sections
+  ansible.builtin.blockinfile:
+    path: '{{ ssh_daemon_config }}'
+    insertbefore: BOF
+    marker: '# {mark} LIONTECH PUBLIC KEY AUTH'
+    block: 'Include {{ ssh_daemon_include_directory }}/40-liontech-public-key.conf'
+    backup: true
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Reload validated SSH daemon
+- name: Inspect the daemon's effective global configuration
+  ansible.builtin.command:
+    argv: [/usr/sbin/sshd, -T, -f, '{{ ssh_daemon_config }}']
+  changed_when: false
+  register: effective_ssh_configuration
+  when: not ansible_check_mode
+- name: Require effective global public-key authentication
+  ansible.builtin.assert:
+    that: "'pubkeyauthentication yes' in effective_ssh_configuration.stdout_lines"
+    fail_msg: Review conflicting settings before using the new accounts.
+  when: not ansible_check_mode

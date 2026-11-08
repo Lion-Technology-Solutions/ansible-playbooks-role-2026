@@ -7,3 +7,9 @@ artifacts/
 *.pem
 .vault-pass*
 **/__pycache__/
+.local-keys/
+public_keys/*.pub
+access-management/users.local.yml
+access-management/*.local.yml
+id_rsa*
+id_ed25519*

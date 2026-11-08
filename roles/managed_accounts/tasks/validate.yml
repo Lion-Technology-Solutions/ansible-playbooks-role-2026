@@ -1,0 +1,39 @@
+---
+- name: Require a nonempty list of uniquely named students
+  ansible.builtin.assert:
+    that:
+      - managed_ssh_users is sequence
+      - managed_ssh_users is not string
+      - managed_ssh_users | length > 0
+      - (managed_ssh_users | map(attribute='name') | list | unique | length) == (managed_ssh_users | length)
+    fail_msg: Supply one unique entry per student in the users YAML file.
+  run_once: true
+- name: Validate usernames, privilege switches and PUBLIC key inputs before any mutation
+  ansible.builtin.assert:
+    that:
+      - item.name is match('^[a-z_][a-z0-9_-]{0,30}$')
+      - item.name not in ['root', 'ubuntu', 'ec2-user']
+      - item.public_key_file is match('^/')
+      - item.public_key_file is match('.*\.pub$')
+      - item.sudo_enabled | default(false) is boolean
+      - item.sudo_nopasswd | default(false) is boolean
+      - not (item.sudo_nopasswd | default(false)) or (item.sudo_enabled | default(false))
+      - >-
+        lookup('ansible.builtin.file', item.public_key_file) is match('^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/=]+(?: .*)?$')
+      - lookup('ansible.builtin.file', item.public_key_file).splitlines() | length == 1
+    fail_msg: Use lowercase non-bootstrap usernames and a valid absolute PUBLIC .pub key path; check the sudo booleans.
+  loop: '{{ managed_ssh_users }}'
+  loop_control:
+    label: '{{ item.name }}'
+  run_once: true
+- name: Validate each public key using OpenSSH on the controller
+  ansible.builtin.command:
+    argv: [ssh-keygen, -l, -f, '{{ item.public_key_file }}']
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+  loop: '{{ managed_ssh_users }}'
+  loop_control:
+    label: '{{ item.name }}'
+  run_once: true

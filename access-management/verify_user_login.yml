@@ -1,0 +1,44 @@
+---
+- name: Authenticate as a named user without editing Terraform inventory
+  hosts: all
+  gather_facts: false
+  become: false
+  vars:
+    login_username: paul
+    login_private_key_file: '{{ lookup("env", "HOME") }}/.ssh/liontech_paul'
+    # Play variables override inventory values; extra vars still have precedence.
+    ansible_user: '{{ login_username }}'
+    ansible_ssh_private_key_file: '{{ login_private_key_file | expanduser }}'
+    team_workspace: /srv/liontech/team
+  tasks:
+    - name: Require explicit valid login settings
+      ansible.builtin.assert:
+        that:
+          - login_username is match('^[a-z_][a-z0-9_-]{0,30}$')
+          - login_username not in ['root', 'ubuntu', 'ec2-user']
+    - name: Test Python execution through the new user's actual SSH connection
+      ansible.builtin.ping:
+    - name: Identify the authenticated Linux user
+      ansible.builtin.command: id -un
+      changed_when: false
+      register: authenticated_user
+    - name: Assert that the connection really used the requested user
+      ansible.builtin.assert:
+        that: authenticated_user.stdout == login_username
+    - name: Write a user-owned file in the shared workspace
+      ansible.builtin.copy:
+        content: 'Authenticated as {{ login_username }} on {{ inventory_hostname }}\n'
+        dest: '{{ team_workspace }}/{{ login_username }}-{{ inventory_hostname }}.txt'
+        mode: '0640'
+    - name: Check whether this user can use passwordless sudo
+      ansible.builtin.command: sudo -n true
+      changed_when: false
+      failed_when: false
+      register: sudo_check
+    - name: Report the actual passwordless sudo result
+      ansible.builtin.debug:
+        msg: 'user={{ authenticated_user.stdout }} passwordless_sudo={{ sudo_check.rc == 0 }}'
+    - name: Assert expected passwordless sudo when the instructor supplies a policy expectation
+      ansible.builtin.assert:
+        that: (sudo_check.rc == 0) == (expected_passwordless_sudo | bool)
+      when: expected_passwordless_sudo is defined

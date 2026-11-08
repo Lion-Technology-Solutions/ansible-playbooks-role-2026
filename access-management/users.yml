@@ -1,0 +1,27 @@
+---
+# Each person supplies ONLY their public key. Names are lowercase Linux logins.
+# Paul and Elvis have full passwordless sudo FOR THIS CLASSROOM EXAMPLE.
+# Change sudo_enabled to false for users who should not administer the servers.
+managed_ssh_users:
+  - name: paul
+    comment: Paul
+    public_key_file: '{{ playbook_dir }}/../public_keys/paul.pub'
+    sudo_enabled: true
+    sudo_nopasswd: true
+  - name: elvis
+    comment: Elvis
+    public_key_file: '{{ playbook_dir }}/../public_keys/elvis.pub'
+    sudo_enabled: true
+    sudo_nopasswd: true
+  - name: john
+    comment: John
+    public_key_file: '{{ playbook_dir }}/../public_keys/john.pub'
+    sudo_enabled: false
+  - name: george
+    comment: George
+    public_key_file: '{{ playbook_dir }}/../public_keys/george.pub'
+    sudo_enabled: false
+  - name: mercy
+    comment: Mercy
+    public_key_file: '{{ playbook_dir }}/../public_keys/mercy.pub'
+    sudo_enabled: false
