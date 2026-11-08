@@ -45,6 +45,7 @@
     append: true
     home: '{{ ssh_accounts_home_base }}/{{ item.name }}'
     create_home: true
+    skeleton: '{{ ssh_accounts_skeleton }}'
     shell: /bin/bash
     password_lock: true
     state: present

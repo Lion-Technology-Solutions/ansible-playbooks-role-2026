@@ -48,6 +48,7 @@ def main():
     os.environ['ANSIBLE_SSH_ARGS'] = '-C -o ControlMaster=no -o ControlPersist=no'
     try:
         (base / 'homes').mkdir(mode=0o755)
+        (base / 'empty-skeleton').mkdir(mode=0o755)
         (base / 'keys').mkdir(mode=0o700)
         Path('/run/sshd').mkdir(mode=0o755, exist_ok=True)
         host_key = base / 'keys/host'
@@ -60,7 +61,7 @@ def main():
             f'Port {port}\nListenAddress 127.0.0.1\nHostKey {host_key}\n'
             f'PidFile {base}/sshd.pid\nAuthorizedKeysFile .ssh/authorized_keys\n'
             'PasswordAuthentication no\nKbdInteractiveAuthentication no\n'
-            'UsePAM yes\nPermitRootLogin no\nStrictModes yes\n'
+            'UsePAM yes\nPermitRootLogin no\nStrictModes yes\nSubsystem sftp internal-sftp\n'
             'PubkeyAuthentication no\n'  # The SSH role must enable it correctly.
         )
         users = []
@@ -75,6 +76,7 @@ def main():
         settings = {
             'users_file': str(users_file),
             'ssh_accounts_home_base': str(base / 'homes'),
+            'ssh_accounts_skeleton': str(base / 'empty-skeleton'),
             'ssh_team_group': group,
             'ssh_team_workspace': str(base / 'team'),
             'ssh_daemon_config': str(config),
@@ -107,7 +109,9 @@ def main():
             private_header = re.compile(r'-----BEGIN (?:OPENSSH |RSA |EC |DSA |ENCRYPTED )?PRIVATE KEY-----')
             for candidate in home.rglob('*'):
                 if candidate.is_file():
-                    assert not private_header.search(candidate.read_text(errors='ignore')), f'Private key found at {candidate}'
+                    with candidate.open('rb') as stream:
+                        header = stream.read(4096).decode(errors='ignore').lstrip()
+                    assert not private_header.match(header), f'Private key found at {candidate}'
         # Build known_hosts from our own generated host key, not unverified ssh-keyscan output.
         known = base / 'known_hosts'
         public = Path(str(host_key) + '.pub').read_text().split()
