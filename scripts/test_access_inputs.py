@@ -41,3 +41,17 @@ with tempfile.TemporaryDirectory(prefix='liontech-access-inputs-') as directory:
     check('Malformed key rejected', [dict(users[0], public_key_file=str(invalid))], False)
     check('String boolean rejected', [dict(users[0], sudo_enabled='true')], False)
     check('Inconsistent sudo settings rejected', [dict(users[0], sudo_nopasswd=True)], False)
+    inventory = base / 'terraform-example.ini'
+    inventory.write_text('web01 ansible_host=192.0.2.15 ansible_user=ubuntu ansible_port=2222\n')
+    client = base / 'output/ssh_config_paul'
+    render = ['ansible-playbook', '-i', str(inventory), 'access-management/render_ssh_config.yml',
+              '-e', json.dumps({'client_ssh_config': str(client), 'login_username': 'paul',
+                               'login_private_key_file': str(base / 'paul')})]
+    subprocess.run(render, text=True, capture_output=True, check=True)
+    content = client.read_text()
+    for expected in ['Host liontech-web01', 'HostName 192.0.2.15', 'User paul', 'Port 2222', 'StrictHostKeyChecking yes']:
+        assert expected in content, content
+    assert client.stat().st_mode & 0o777 == 0o600
+    repeat = subprocess.run(render, text=True, capture_output=True, check=True)
+    assert 'changed=0' in repeat.stdout.split('PLAY RECAP')[-1]
+    print('Terraform-derived local SSH client config and stable rerun: PASS')

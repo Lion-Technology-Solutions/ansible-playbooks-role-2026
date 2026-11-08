@@ -78,7 +78,7 @@ ansible-playbook -i "$TF_INVENTORY" access-management/deploy_users.yml -e users_
 ansible-playbook -i "$TF_INVENTORY" access-management/deploy_user_prompt.yml -K
 ```
 
-It asks for the lowercase username and absolute public `.pub` key path. This workflow grants normal student access, not sudo. To change authorization, use the reviewed users file workflow instead. In noninteractive automation, prompt values can be supplied explicitly:
+It asks for the lowercase username and absolute public `.pub` key path. This workflow grants normal student access, not sudo. For an existing administrator it also removes this role's own sudo grant; use the reviewed users file workflow when preserving administrator access. In noninteractive automation, prompt values can be supplied explicitly:
 
 ```bash
 ansible-playbook -i "$TF_INVENTORY" access-management/deploy_user_prompt.yml \

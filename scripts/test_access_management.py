@@ -91,6 +91,11 @@ def main():
         run(deploy)
         assert_clean_repeat(run(deploy))
         print('Five accounts, public keys, workspace, sudoers and SSH configuration: PASS; unchanged repeat: PASS')
+        prompt = ['ansible-playbook', '-i', str(local_inventory), 'access-management/deploy_user_prompt.yml',
+                  '-e', '@' + str(settings_file), '-e', json.dumps({'student_username': names[-1],
+                  'student_public_key_file': users[-1]['public_key_file']})]
+        assert_clean_repeat(run(prompt))
+        print('Single-user prompt workflow with supplied noninteractive answers: PASS')
         # Verify exact file permissions, public-key presence and absence of copied private keys.
         for user in users:
             home = base / 'homes' / user['name']
