@@ -1,0 +1,96 @@
+# LionTech Academy Student Portal — Vercel
+
+This is the Vercel application in the Ansible classroom repository. The original `roles/school_management` project remains an independent Ubuntu lab. The portal uses Flask and persistent PostgreSQL, provisioned through Vercel's Neon integration. It does not require Terraform servers, systemd, Nginx, or a writable local filesystem.
+
+## Vercel configuration
+
+- Team: `liontechs-projects`
+- Project: `liontech-student-portal`
+- Repository: `Lion-Technology-Solutions/ansible-playbooks-role-2026`
+- Production branch: `main`
+- Root directory: `school-portal`
+- Framework: Flask
+- Function region: `iad1`, matching the Neon database region
+- Runtime dependency installation: `requirements.txt`
+
+Environment variables, stored in Vercel rather than Git:
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` | Pooled PostgreSQL connection, provisioned by Neon |
+| `SCHOOL_SECRET_KEY` | High-entropy session signing secret |
+| `SCHOOL_ADMIN_PASSWORD` | Initial administrator password; username is `admin` |
+| `INITIAL_ANALYTICS_RECORDING_URL` | Optional supplied Zoom recording, seeded once; kept out of this public repository |
+
+Production and preview need independently configured secrets. The initial portal deployment is production-only. Before using preview deployments with real students, connect an isolated preview database/branch and separate preview credentials. The current Marketplace connection can share its database between targets; do not use production data for unreviewed previews.
+
+The application refuses to start without required variables. It requires PostgreSQL outside explicit test mode. SQLite is used only by automated tests, never as an ephemeral production fallback. Database schema creation and course seeding are additive, idempotent, and serialized with a PostgreSQL advisory lock. Future schema changes require reviewed migrations before rollout; `create_all` does not migrate existing columns.
+
+## Enrollment and payment approval
+
+1. Students register at `/register`, choose new/existing status, country, name, email, phone and password.
+2. At `/enrollments`, they request DevOps, Cybersecurity, Cloud Computing or Data Analytics.
+3. New students select an available intake. Data Analytics starts November 14, 2026, as supplied in the enrollment flyer. Other intake dates are not invented: the student can request a place and support confirms the next intake. Administrators can publish actual dates. Existing students skip intake selection.
+4. Country-specific Flutterwave links appear after the enrollment request. Cameroon displays **2,000 FCFA toward the first installment**. Nigeria/Ghana use the supplied checkout links without inventing a fee. Other countries are directed to support to arrange payment.
+5. Students submit their transaction reference and optional payer/date details. Account access stays pending.
+6. At `/admin`, the administrator checks the transaction and correct fee in Flutterwave, selects **Confirm payment verified**, and then **Approve enrollment & portal**. Server-side rules enforce payment verification before approval. Reused transaction references are rejected.
+
+Payment verification is manual. There is no payment webhook/API credential configured. Opening checkout or submitting a reference never marks an account paid automatically. An existing-student declaration does not bypass payment verification or approval. Email ownership is not automatically verified; public signup creates a pending account only.
+
+## Classes, resources and recordings
+
+- Approved students access `/portal` and see only their approved courses.
+- The supplied Data Analytics Zoom registration and Drive resources are installed as course links.
+- Administrators can schedule classes with a date/time in **UTC** and a Zoom registration link. Students also see their local class time.
+- Students register in the portal and complete any Zoom registration separately. The app does not call Zoom's API or claim that portal registration automatically registers someone in Zoom.
+- Admins publish Zoom recording links now or at a future UTC availability time. The link is shown only to approved students enrolled in that course.
+- Each publication creates in-portal notifications for enrolled students. Newly approved students receive existing recording notifications too. Future recordings/notifications stay hidden until their availability time.
+- The supplied latest recording is seeded privately through the environment variable. Updating the seed variable later does not replace an existing recording: publish a new recording through the admin dashboard instead.
+
+Automatic delivery is inside the portal. Email, push and WhatsApp Business delivery, and automatic Zoom import, are not configured. Admins publish recordings after class or schedule availability in advance.
+
+## Attendance and support
+
+At `/attendance`, approved students select a class that has started. The server stores one attendance record per student/class, and administrators can see the register. It then displays a WhatsApp report link for **+1 437-575-6656**. The student opens WhatsApp and taps **Send**; the app does not report WhatsApp delivery as successful or silently message anyone.
+
+All support and project-completed links use the same supplied WhatsApp number. Attendance is stored even if WhatsApp is unavailable. No automated WhatsApp Business API is configured.
+
+## Assignments, quizzes and results
+
+Admins publish assignment or quiz instructions for a course, with an optional due date. Students submit text answers and an optional project/document/file link. Admins review, assign 0–100, and publish feedback. Results and a notification appear in the student's own portal. Updating an answer clears the previous grade and returns the submission for review. Quizzes are instructor-reviewed, not automatically scored multiple-choice exams. Uploaded files are represented by student-supplied sharing links; the portal does not store file binaries.
+
+## Authentication and administration
+
+Student passwords are hashed with PBKDF2, sessions use secure/HTTP-only/SameSite cookies, forms require CSRF tokens, and queries use SQLAlchemy parameter binding. Student identity comes from the signed session, not form IDs. Password resets invalidate the student's existing sessions. Authentication attempts are rate-limited using the persistent database. An admin password rotation invalidates admin sessions; rotate `SCHOOL_ADMIN_PASSWORD` and redeploy. Never put credentials or private Zoom recording links in Git or build logs.
+
+Admin functions include reviewing pending enrollments, payment verification, approving/revoking course access, managing intake dates and course links, scheduling classes, publishing recordings and assessments, grading submissions, viewing attendance, and resetting student passwords.
+
+## Tests
+
+From the repository root:
+
+```bash
+source .venv/bin/activate
+pip install -r school-portal/requirements.txt pytest==8.4.2
+pytest school-portal/tests -q
+```
+
+Tests explicitly use isolated SQLite databases and check country-specific payment routing, dates/new-vs-existing handling, approval gates, duplicate payment references, student isolation, CSRF, class registration, attendance uniqueness and WhatsApp payloads, scheduled recordings, notifications, submissions/results, password resets, and revocation. Deployed verification checks the real PostgreSQL-backed health endpoint and the critical live user flows.
+
+## Local development
+
+Provision a separate development Postgres database. Link this exact project, pull Development variables, and set separate development credentials rather than copying Production Secrets:
+
+```bash
+cd school-portal
+vercel link --yes --scope liontechs-projects --project liontech-student-portal
+vercel env pull .env.local --yes --environment=development
+# Export the required development variables through your normal environment loader.
+flask --app app run
+```
+
+Use `https` locally or explicitly adjust the secure-cookie flag in a local-only test configuration. Do not deploy with `SCHOOL_TESTING=1`.
+
+## Recovery
+
+The destroyed Terraform servers' SQLite files are not available to this Vercel application. Previously stored data can be restored only from an existing backup through a reviewed importer; no automatic recovery or migration of destroyed server data is claimed. The new PostgreSQL database persists independently of application redeployments. Configure appropriate Neon backups and retention for live student records.

@@ -13,3 +13,10 @@ access-management/users.local.yml
 access-management/*.local.yml
 id_rsa*
 id_ed25519*
+
+.vercel/
+.env
+.env.*
+!.env.example
+*.sqlite3
+.pytest_cache/

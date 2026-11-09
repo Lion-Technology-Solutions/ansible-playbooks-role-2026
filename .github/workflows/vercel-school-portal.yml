@@ -1,0 +1,14 @@
+name: Vercel school portal tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  portal-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r school-portal/requirements.txt pytest==8.4.2
+      - run: pytest school-portal/tests -q
