@@ -4,11 +4,11 @@
 {% if admin_view=='dashboard' %}{% include 'admin_dashboard.html' %}
 {% elif admin_view=='students' %}{% include 'admin_student_table.html' %}{% include 'admin_students.html' %}{% include 'admin_certificates.html' %}
 {% elif admin_view=='enrollments' %}{% include 'enrollment_approvals.html' %}
-{% elif admin_view=='payments' %}{% include 'admin_finance.html' %}
-{% elif admin_view=='programs' %}{% include 'catalog_admin.html' %}{% include 'admin_prices.html' %}{% include 'program_settings.html' %}{% include 'admin_course_links.html' %}
+{% elif admin_view=='payments' %}{% include 'manual_payments_admin.html' %}{% include 'admin_finance.html' %}
+{% elif admin_view=='programs' %}{% include 'global_pricing_admin.html' %}{% include 'catalog_admin.html' %}{% include 'admin_prices.html' %}{% include 'program_settings.html' %}{% include 'admin_course_links.html' %}
 {% elif admin_view=='classes' %}{% include 'admin_teaching.html' %}{% include 'class_links_admin.html' %}{% include 'admin_results.html' %}{% include 'admin_attendance.html' %}
 {% elif admin_view=='materials' %}{% include 'lesson_admin.html' %}
 {% elif admin_view=='announcements' %}{% include 'public_content_admin.html' %}
-{% elif admin_view=='reports' %}{% include 'admin_finance.html' %}{% include 'admin_student_table.html' %}
+{% elif admin_view=='reports' %}{% include 'manual_payments_admin.html' %}{% include 'admin_finance.html' %}{% include 'admin_student_table.html' %}
 {% elif admin_view=='settings' %}{% include 'branding_admin.html' %}{% include 'account_requests.html' %}<section class="dash-card"><h2>2027 student target</h2><form method="post">{{ token() }}<input type="hidden" name="action" value="growth_goal"><input type="hidden" name="return_view" value="settings"><label>Target students<input type="number" name="students" min="1" max="999999" value="{{ overview.target }}" required></label><button class="button blue">Save target</button></form></section>{% endif %}
 {% endblock %}

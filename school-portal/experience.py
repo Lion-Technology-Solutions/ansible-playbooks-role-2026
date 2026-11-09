@@ -3,8 +3,7 @@ import calendar
 from datetime import date
 from decimal import Decimal,InvalidOperation,ROUND_DOWN
 
-CURRENCIES=('EUR','USD','CAD','GBP','NGN','GHS','XAF')
-TIMEZONES=('America/Toronto','Europe/Madrid','Europe/London','Africa/Lagos','Africa/Douala','America/New_York','UTC')
+from localization import CURRENCIES, TIMEZONES
 ES={
  'Dashboard':'Panel','My Programs':'Mis programas','Live Classes':'Clases en vivo','Assignments':'Tareas','Payments':'Pagos','Certificates':'Certificados','Support':'Soporte',
  'Students':'Estudiantes','Enrollments':'Inscripciones','Programs':'Programas','Classes':'Clases','Materials':'Materiales','Announcements':'Anuncios','Reports':'Informes','Settings':'Configuración',
@@ -25,8 +24,10 @@ ES={
 }
 
 
+FR={'Dashboard':'Tableau de bord','My Programs':'Mes programmes','Live Classes':'Cours en direct','Assignments':'Devoirs','Payments':'Paiements','Certificates':'Certificats','Support':'Assistance','Students':'Étudiants','Enrollments':'Inscriptions','Programs':'Programmes','Classes':'Cours','Materials':'Documents','Announcements':'Annonces','Reports':'Rapports','Settings':'Paramètres','Sign out':'Déconnexion','Welcome back':'Bon retour','Progress':'Progression','Continue':'Continuer','Country':'Pays','Language':'Langue','Timezone':'Fuseau horaire','Curriculum':'Programme détaillé','View & Pay':'Voir et payer','Resume Learning':'Reprendre les cours','Join Class':'Rejoindre le cours','Choose your program':'Choisissez votre programme','Create your account':'Créez votre compte','Complete enrollment':"Finalisez l’inscription",'Full name':'Nom complet','Email address':'Adresse e-mail','Payment methods':'Modes de paiement','Next live class':'Prochain cours en direct','Payment plan':'Plan de paiement','Need help?':"Besoin d’aide ?",'Open Chat':'Ouvrir la discussion'}
+
 def translated(text,language='en'):
-    return ES.get(text,text) if language=='es' else text
+    return (ES if language=='es' else FR if language=='fr' else {}).get(text,text)
 
 
 def money_value(value):

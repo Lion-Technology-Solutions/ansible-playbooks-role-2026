@@ -5,3 +5,6 @@ psycopg[binary]==3.2.10
 
 vercel-blob==0.5.1
 Pillow==12.2.0
+
+Babel==2.18.0
+pycountry==24.6.1

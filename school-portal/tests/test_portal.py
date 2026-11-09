@@ -12,13 +12,16 @@ def csrf(client, path='/login'):
 
 
 def post(client, path, **fields):
-    page = '/admin' if path == '/admin' else ('/register' if path == '/register' else '/enrollments')
+    page = '/admin' if path.startswith('/admin') else ('/register' if path == '/register' else '/enrollments')
+    if path.startswith('/enrollment/') and path.endswith('/payment') and 'student_number' not in fields:
+        match=re.search(rb'LT-\d{4}-\d{6,}',client.get('/portal').data)
+        if match:fields['student_number']=match[0].decode()
     return client.post(path, data={'csrf': csrf(client, page), **fields}, follow_redirects=True)
 
 
 def register(client, email='student@example.com', country='Cameroon', kind='new'):
     return post(client, '/register', name='Student Example', email=email, phone='+237600000000',
-                country=country, kind=kind, password='student-password', confirm_password='student-password')
+                country=country, kind=kind, language='en', password='student-password', confirm_password='student-password')
 
 
 def admin(client):
