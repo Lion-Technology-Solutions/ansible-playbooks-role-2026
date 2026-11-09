@@ -3,7 +3,7 @@
   <p>These details appear on student accounts before and after program selection. Enter class times with their timezone. Leave an unconfirmed detail blank to direct students to support.</p>
   {% for course in courses %}
   <details><summary>{{ course.name }}</summary>
-    <form method="post">{{ token() }}
+    <form method="post"><input type="hidden" name="return_view" value="programs">{{ token() }}
       <input type="hidden" name="action" value="program_profile"><input type="hidden" name="course_id" value="{{ course.id }}">
       <label>Program duration<input name="duration" maxlength="150" value="{{ course.profile.duration }}" placeholder="e.g. 3 months"></label>
       <label>Class schedule and timezone<textarea name="schedule" maxlength="500" rows="2" placeholder="Enter the confirmed days, times and timezone">{{ course.profile.schedule }}</textarea></label>

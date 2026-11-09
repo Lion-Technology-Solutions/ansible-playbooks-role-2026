@@ -1,5 +1,5 @@
 {% macro lesson_form(lesson=none) %}
-<form method="post">{{ token() }}<input type="hidden" name="action" value="{{ 'edit_lesson' if lesson else 'create_lesson' }}">{% if lesson %}<input type="hidden" name="lesson_id" value="{{ lesson.id }}">{% endif %}
+<form method="post"><input type="hidden" name="return_view" value="materials">{{ token() }}<input type="hidden" name="action" value="{{ 'edit_lesson' if lesson else 'create_lesson' }}">{% if lesson %}<input type="hidden" name="lesson_id" value="{{ lesson.id }}">{% endif %}
 <label>Program<select name="course_id" required>{% for course in courses %}<option value="{{ course.id }}"{% if lesson and lesson.course_id==course.id %} selected{% endif %}>{{ course.name }}</option>{% endfor %}</select></label>
 <label>Lesson title<input name="title" maxlength="150" value="{{ lesson.title if lesson else '' }}" required></label><div class="two-col"><label>Module / unit<input name="module" maxlength="100" value="{{ lesson.module if lesson else '' }}" placeholder="e.g. Module 1 · Excel fundamentals"></label><label>Lesson order<input type="number" name="position" min="1" max="9999" value="{{ lesson.position if lesson else 1 }}" required></label></div>
 <label>Lesson notes and instructions<textarea name="body" maxlength="20000" rows="6">{{ lesson.body if lesson else '' }}</textarea></label>

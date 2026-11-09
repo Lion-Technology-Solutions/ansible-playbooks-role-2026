@@ -5,6 +5,9 @@ import os
 import re
 import secrets
 import threading
+import csv
+import io
+from decimal import Decimal
 from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from urllib.parse import urlencode, urlsplit
@@ -18,6 +21,7 @@ from sqlalchemy.pool import NullPool
 from werkzeug.security import check_password_hash, generate_password_hash
 from vercel.blob import BlobError
 from file_storage import CHUNK_SIZE, FORM_LIMIT, PrivateBlobStorage, byte_range, validate_upload, validate_image
+from experience import CURRENCIES, TIMEZONES, translated, money_value, installment_schedule, csv_safe
 
 UTC = timezone.utc
 db = SQLAlchemy()
@@ -33,7 +37,7 @@ COURSES = [
     ('cloud-computing', 'Cloud Computing', 'Design and operate reliable cloud infrastructure.', 'AWS · Networking · Infrastructure as code'),
     ('data-analytics', 'Data Analytics', 'Turn raw data into decisions that matter.', 'Excel · SQL · Python · Power BI'),
 ]
-COUNTRIES = ['Cameroon', 'Nigeria', 'Ghana', 'Canada', 'United States', 'United Kingdom', 'Other']
+COUNTRIES = ['Cameroon', 'Nigeria', 'Ghana', 'Canada', 'United States', 'United Kingdom', 'Other', 'Spain', 'France', 'Germany', 'Australia']
 
 
 def now():
@@ -64,6 +68,70 @@ class StudentIdentity(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     student_id = db.Column(db.String(36), db.ForeignKey('portal_students.id'), unique=True, nullable=False)
     student = db.relationship(Student, back_populates='identity')
+
+
+class StudentPreference(db.Model):
+    __tablename__='portal_student_preferences'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    language=db.Column(db.String(2),default='en',nullable=False)
+    timezone=db.Column(db.String(60),default='America/Toronto',nullable=False)
+
+
+class LessonCompletion(db.Model):
+    __tablename__='portal_lesson_completions'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    lesson_id=db.Column(db.Integer,db.ForeignKey('portal_lessons.id'),primary_key=True)
+    completed_at=db.Column(db.DateTime(timezone=True),default=now,nullable=False)
+
+
+class CoursePrice(db.Model):
+    __tablename__='portal_course_prices'
+    course_id=db.Column(db.Integer,db.ForeignKey('portal_courses.id'),primary_key=True)
+    country=db.Column(db.String(80),primary_key=True)
+    currency=db.Column(db.String(3),nullable=False)
+    total=db.Column(db.Numeric(12,2),nullable=False)
+    installments=db.Column(db.Integer,default=1,nullable=False)
+    full_url=db.Column(db.Text,default='',nullable=False)
+    installment_url=db.Column(db.Text,default='',nullable=False)
+
+
+class BillingSelection(db.Model):
+    __tablename__='portal_billing_selections'
+    enrollment_id=db.Column(db.Integer,db.ForeignKey('portal_enrollments.id'),primary_key=True)
+    plan=db.Column(db.String(15),nullable=False)
+    currency=db.Column(db.String(3),nullable=False)
+    total=db.Column(db.Numeric(12,2),nullable=False)
+    installments=db.Column(db.Integer,nullable=False)
+    starts_on=db.Column(db.Date,nullable=False)
+    checkout_url=db.Column(db.Text,default='',nullable=False)
+
+
+class PaymentEntry(db.Model):
+    __tablename__='portal_payment_entries'
+    id=db.Column(db.Integer,primary_key=True)
+    enrollment_id=db.Column(db.Integer,db.ForeignKey('portal_enrollments.id'),nullable=False)
+    reference=db.Column(db.String(150),unique=True,nullable=False)
+    amount=db.Column(db.Numeric(12,2),nullable=False)
+    currency=db.Column(db.String(3),nullable=False)
+    received_at=db.Column(db.DateTime(timezone=True),default=now,nullable=False)
+    enrollment=db.relationship('Enrollment')
+
+
+class GrowthGoal(db.Model):
+    __tablename__='portal_growth_goals'
+    year=db.Column(db.Integer,primary_key=True)
+    students=db.Column(db.Integer,nullable=False)
+
+
+class Certificate(db.Model):
+    __tablename__='portal_certificates'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),nullable=False)
+    course_id=db.Column(db.Integer,db.ForeignKey('portal_courses.id'),nullable=False)
+    issued_at=db.Column(db.DateTime(timezone=True),default=now,nullable=False)
+    student=db.relationship(Student)
+    course=db.relationship('Course')
+    __table_args__=(UniqueConstraint('student_id','course_id'),)
 
 
 class AccountRequest(db.Model):
@@ -303,6 +371,8 @@ class LoginAttempt(db.Model):
 def seed(connection):
     """Idempotent bootstrap under the schema transaction/advisory lock."""
     table = Course.__table__
+    if not connection.execute(select(GrowthGoal.year).where(GrowthGoal.year==2027)).first():
+        connection.execute(GrowthGoal.__table__.insert().values(year=2027,students=5000))
     if not connection.execute(select(SiteBranding.id).where(SiteBranding.id==1)).first():
         connection.execute(SiteBranding.__table__.insert().values(id=1))
     for slug, name, description, skills in COURSES:
@@ -497,11 +567,20 @@ def create_app(config=None):
     @app.context_processor
     def context():
         session.setdefault('csrf', secrets.token_hex(24))
+        preference=db.session.get(StudentPreference,g.student.id) if g.student else None
+        language=preference.language if preference else session.get('ui_language','en')
+        timezone=preference.timezone if preference else session.get('ui_timezone','Europe/Madrid' if g.student and g.student.country=='Spain' else 'America/Toronto')
         account_request_url = account_whatsapp(g.student) if g.student else ''
         return dict(csrf=session['csrf'], support_url=whatsapp('Hello LionTech Academy, I need help with my student portal.'),
                     completion_url=whatsapp('Project completed'), account_request_url=account_request_url,
                     countries=COUNTRIES, payments=PAYMENTS, course_payment=course_payment, account_whatsapp=account_whatsapp,
-                    branding=db.session.get(SiteBranding,1), utcnow=now(), aware=aware)
+                    branding=db.session.get(SiteBranding,1), utcnow=now(), aware=aware,
+                    ui_language=language,ui_timezone=timezone,timezones=TIMEZONES,currencies=CURRENCIES,
+                    t=lambda text:translated(text,language),current_path=request.full_path.rstrip('?'),
+                    billing_for=billing_data,
+                    offer_for=offer_for,
+                    enrollment_checkout=enrollment_checkout,
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance'))
 
     def student_required():
         def decorate(fn):
@@ -524,6 +603,157 @@ def create_app(config=None):
     def enrollment_for(course_id):
         return db.session.scalar(select(Enrollment).where(Enrollment.student_id == g.student.id,
             Enrollment.course_id == course_id, Enrollment.status == 'approved', Enrollment.payment_status == 'verified'))
+
+    def offer_for(course_id,country):
+        return db.session.get(CoursePrice,(course_id,country)) or db.session.get(CoursePrice,(course_id,'Other'))
+
+    def enrollment_checkout(enrollment):
+        terms=db.session.get(BillingSelection,enrollment.id)
+        return ((terms.checkout_url,'Pay selected plan') if terms.checkout_url else None) if terms else course_payment(enrollment.course,enrollment.student.country)
+
+    def billing_data(enrollment):
+        terms=db.session.get(BillingSelection,enrollment.id)
+        if not terms:return None
+        collected=sum((entry.amount for entry in db.session.scalars(select(PaymentEntry).where(PaymentEntry.enrollment_id==enrollment.id,PaymentEntry.currency==terms.currency))),Decimal(0))
+        remaining=max(Decimal(0),terms.total-collected)
+        cumulative=Decimal(0);next_payment=None
+        for part in installment_schedule(terms.total,terms.installments,terms.starts_on):
+            cumulative+=part['amount']
+            if cumulative>collected:
+                next_payment={'amount':min(part['amount'],cumulative-collected),'due':part['due']};break
+        return {'terms':terms,'collected':collected,'remaining':remaining,'next':next_payment}
+
+    def learning_progress(student_id,course_id):
+        lessons=db.session.scalars(select(Lesson).where(Lesson.course_id==course_id,Lesson.published.is_(True),Lesson.available_at<=now()).order_by(Lesson.position,Lesson.id)).all()
+        completed=set(db.session.scalars(select(LessonCompletion.lesson_id).where(LessonCompletion.student_id==student_id)))
+        done=sum(lesson.id in completed for lesson in lessons)
+        resume=next((lesson for lesson in lessons if lesson.id not in completed),lessons[-1] if lessons else None)
+        return {'lessons':lessons,'completed':completed,'done':done,'total':len(lessons),'percent':round(done/len(lessons)*100) if lessons else 0,'resume':resume}
+
+    @app.post('/preferences')
+    def preferences():
+        language=field('language',2);zone=field('timezone',60)
+        if language not in ('en','es') or zone not in TIMEZONES:abort(400)
+        if g.student:
+            pref=db.session.get(StudentPreference,g.student.id) or StudentPreference(student_id=g.student.id)
+            pref.language,pref.timezone=language,zone;db.session.add(pref);db.session.commit()
+        session['ui_language'],session['ui_timezone']=language,zone
+        destination=field('next',500,False)
+        if not destination.startswith('/') or destination.startswith('//') or '\\' in destination or any(ord(c)<32 for c in destination):destination=url_for('portal' if g.student else 'home')
+        return redirect(destination)
+
+    @app.post('/lessons/<int:lesson_id>/complete')
+    @student_required()
+    def lesson_complete(lesson_id):
+        lesson=db.get_or_404(Lesson,lesson_id)
+        if not lesson.published or aware(lesson.available_at)>now() or not enrollment_for(lesson.course_id):abort(403)
+        if not db.session.get(LessonCompletion,(g.student.id,lesson.id)):
+            db.session.add(LessonCompletion(student_id=g.student.id,lesson_id=lesson.id));db.session.commit()
+        flash('Lesson marked complete. Your progress has been updated.')
+        return redirect(url_for('portal',_anchor='lessons'))
+
+    @app.get('/apply')
+    def application():
+        return render_template('application.html',courses=db.session.scalars(published_courses()).all(),cohorts=upcoming_cohorts(),step=1,selected_slug=request.args.get('program',''))
+
+    @app.post('/apply/choose')
+    def application_choose():
+        try:
+            course_id=int(field('course_id',20));cohort_id=int(field('cohort_id',20))
+        except ValueError:abort(400)
+        course=db.get_or_404(Course,course_id)
+        cohort=db.get_or_404(Cohort,cohort_id)
+        if not course.publication.published or cohort.course_id!=course.id or cohort.start_date not in next_start_dates():abort(400)
+        if g.student:
+            enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==g.student.id,Enrollment.course_id==course.id))
+            if not enrollment:
+                enrollment=Enrollment(student_id=g.student.id,course_id=course.id,cohort_id=cohort.id if g.student.kind=='new' else None)
+                db.session.add(enrollment);db.session.commit()
+            return redirect(url_for('application_payment',enrollment_id=enrollment.id))
+        session['application']={'course_id':course.id,'cohort_id':cohort.id}
+        return redirect(url_for('register'))
+
+    @app.get('/apply/payment/<int:enrollment_id>')
+    @student_required()
+    def application_payment(enrollment_id):
+        enrollment=db.get_or_404(Enrollment,enrollment_id)
+        if enrollment.student_id!=g.student.id:abort(403)
+        return render_template('application_payment.html',e=enrollment,step=3,offer=offer_for(enrollment.course_id,g.student.country),billing=billing_data(enrollment))
+
+    @app.post('/enrollment/<int:enrollment_id>/plan')
+    @student_required()
+    def enrollment_plan(enrollment_id):
+        enrollment=db.get_or_404(Enrollment,enrollment_id)
+        if enrollment.student_id!=g.student.id:abort(403)
+        try:
+            offer=offer_for(enrollment.course_id,g.student.country);plan=field('plan',15)
+            if not offer or plan not in ('full','installments') or (plan=='installments' and offer.installments<2):raise ValueError('This payment plan is not configured for your program and country.')
+            if enrollment.payment_status=='verified' or db.session.scalar(select(PaymentEntry.id).where(PaymentEntry.enrollment_id==enrollment.id).limit(1)):raise ValueError('Contact support to change a plan after payment.')
+            terms=db.session.get(BillingSelection,enrollment.id) or BillingSelection(enrollment_id=enrollment.id)
+            terms.plan,terms.currency,terms.total=plan,offer.currency,offer.total
+            terms.installments=offer.installments if plan=='installments' else 1
+            terms.checkout_url=offer.installment_url if plan=='installments' else offer.full_url
+            terms.starts_on=enrollment.cohort.start_date if enrollment.cohort else academy_today()
+            db.session.add(terms);db.session.commit();flash('Payment plan saved. Complete payment using the program checkout below.')
+        except ValueError as error:db.session.rollback();flash(str(error))
+        return redirect(url_for('application_payment',enrollment_id=enrollment.id))
+
+    @app.get('/certificates/<certificate_id>')
+    def certificate_page(certificate_id):
+        certificate=db.get_or_404(Certificate,certificate_id)
+        if not session.get('admin') and (not g.student or certificate.student_id!=g.student.id):abort(403)
+        return render_template('certificate.html',certificate=certificate)
+
+    def admin_overview():
+        program=request.args.get('program','');country=request.args.get('country','');year=request.args.get('year','');currency=request.args.get('currency','EUR')
+        if (program and not program.isdigit()) or (country and country not in COUNTRIES) or (year and (not year.isdigit() or not 2000<=int(year)<=2100)) or currency not in CURRENCIES:abort(400)
+        query=select(Enrollment).join(Student,Student.id==Enrollment.student_id)
+        accounts=select(Student)
+        if program:
+            query=query.where(Enrollment.course_id==int(program))
+            accounts=accounts.where(Student.id.in_(select(Enrollment.student_id).where(Enrollment.course_id==int(program))))
+        if country:query=query.where(Student.country==country);accounts=accounts.where(Student.country==country)
+        if year:query=query.where(db.extract('year',Enrollment.created_at)==int(year));accounts=accounts.where(db.extract('year',Student.created_at)==int(year))
+        records=db.session.scalars(query.order_by(Enrollment.created_at.desc())).all()
+        entries=db.session.scalars(select(PaymentEntry).where(PaymentEntry.enrollment_id.in_([e.id for e in records]),PaymentEntry.currency==currency).order_by(PaymentEntry.received_at.desc())).all()
+        terms=db.session.scalars(select(BillingSelection).where(BillingSelection.enrollment_id.in_([e.id for e in records]),BillingSelection.currency==currency)).all()
+        totals={}
+        for entry in entries:totals[entry.enrollment_id]=totals.get(entry.enrollment_id,Decimal(0))+entry.amount
+        collected=sum((entry.amount for entry in entries),Decimal(0))
+        outstanding=sum((max(Decimal(0),item.total-totals.get(item.enrollment_id,Decimal(0))) for item in terms),Decimal(0)) if terms else None
+        confirmed=[e for e in records if e.status=='approved' and e.payment_status=='verified']
+        goal=db.session.get(GrowthGoal,2027)
+        page=request.args.get('page','1')
+        if not page.isdigit():abort(400)
+        page=max(1,int(page));start=(page-1)*50
+        return {'records':records,'rows':records[start:start+50],'entries':entries,'count':len(records),'page':page,'has_next':start+50<len(records),
+            'account_count':db.session.scalar(select(db.func.count()).select_from(accounts.subquery())),
+            'paid_students':len({e.student_id for e in confirmed}),'pending':sum(e.payment_status!='verified' and e.status!='rejected' for e in records),
+            'verified':len({e.student_id for e in records if e.payment_status=='verified'}),'active':len({e.student_id for e in confirmed}),
+            'conversion':round(len(confirmed)/len(records)*100) if records else 0,'target':goal.students if goal else 5000,
+            'collected':collected,'outstanding':outstanding,'forecast':collected+outstanding if outstanding is not None else None,
+            'currency':currency,'program':program,'country':country,'year':year,'unrecorded':sum(e.payment_status=='verified' and e.id not in totals for e in records)}
+
+    @app.get('/admin/reports/payments.csv')
+    @admin_required
+    def payment_report():
+        data=admin_overview();output=io.StringIO();writer=csv.writer(output)
+        writer.writerow(['Student number','Student','Email','Program','Reference','Currency','Amount','Received (UTC)'])
+        for entry in data['entries']:
+            e=entry.enrollment
+            writer.writerow([csv_safe(e.student.student_number),csv_safe(e.student.name),csv_safe(e.student.email),csv_safe(e.course.name),csv_safe(entry.reference),entry.currency,str(entry.amount),aware(entry.received_at).isoformat()])
+        return Response(output.getvalue(),content_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="liontech-recorded-payments.csv"'})
+
+    def record_payment_entry(enrollment,reference,amount,currency,received_at=None):
+        amount=money_value(amount)
+        if currency not in CURRENCIES:raise ValueError('Choose a supported payment currency.')
+        terms=db.session.get(BillingSelection,enrollment.id)
+        if terms and terms.currency!=currency:raise ValueError('Use the currency saved on this enrollment payment plan.')
+        existing=db.session.scalar(select(PaymentEntry).where(PaymentEntry.reference==reference))
+        if existing:
+            if existing.enrollment_id!=enrollment.id or existing.amount!=amount or existing.currency!=currency:raise ValueError('That transaction reference is already recorded with different details.')
+            return
+        db.session.add(PaymentEntry(enrollment_id=enrollment.id,reference=reference,amount=amount,currency=currency,received_at=received_at or now()))
 
     def notify(student_id, title, body='', available_at=None, recording_id=None):
         db.session.add(Notification(student_id=student_id, title=title, body=body,
@@ -670,7 +900,7 @@ def create_app(config=None):
         lesson=db.get_or_404(Lesson,lesson_id)
         if not lesson.published or aware(lesson.available_at)>now(): abort(404)
         if not enrollment_for(lesson.course_id): abort(403)
-        return render_template('lesson_page.html',lesson=lesson,preview=False)
+        return render_template('lesson_page.html',lesson=lesson,preview=False,completed=bool(db.session.get(LessonCompletion,(g.student.id,lesson.id))))
 
     @app.get('/admin/lessons/<int:lesson_id>/preview')
     @admin_required
@@ -745,25 +975,39 @@ def create_app(config=None):
                     raise ValueError('Enter a valid email, country, and student type.')
                 if not 10 <= len(password) <= 128 or password != request.form.get('confirm_password'):
                     raise ValueError('Use matching passwords with 10–128 characters.')
+                application=session.get('application');chosen_course=None;chosen_cohort=None
+                if application:
+                    chosen_course=db.session.get(Course,application.get('course_id'))
+                    chosen_cohort=db.session.get(Cohort,application.get('cohort_id'))
+                    if not chosen_course or not chosen_course.publication.published or not chosen_cohort or chosen_cohort.course_id!=chosen_course.id or chosen_cohort.start_date not in next_start_dates():
+                        raise ValueError('Choose a current program and batch from the enrollment page before creating your account.')
+                language=request.form.get('language',session.get('ui_language','en'))
+                if language not in ('en','es'):raise ValueError('Choose English or Spanish.')
                 student = Student(name=name, email=email, phone=phone, country=country, kind=kind, approved=True,
                     password_hash=generate_password_hash(password, method='pbkdf2:sha256:600000'))
                 db.session.add(student)
                 db.session.flush()
                 db.session.add(StudentIdentity(student_id=student.id))
                 db.session.add(AccountRequest(student_id=student.id))
+                db.session.add(StudentPreference(student_id=student.id,language=language,timezone='Europe/Madrid' if country=='Spain' else session.get('ui_timezone','America/Toronto')))
+                enrollment=None
+                if chosen_course:
+                    enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' else None)
+                    db.session.add(enrollment)
                 db.session.commit()
                 session.clear()
                 session['student_id'] = student.id
                 session['student_auth'] = hmac.new(app.secret_key.encode(), student.password_hash.encode(), 'sha256').hexdigest()
                 session.permanent = True
                 flash(f'Your account is active. Your student number is {student.student_number}. Course access opens after payment confirmation.')
-                return redirect(url_for('portal'))
+                return redirect(url_for('application_payment',enrollment_id=enrollment.id) if enrollment else url_for('portal'))
             except ValueError as exc:
                 flash(str(exc))
             except IntegrityError:
                 db.session.rollback()
                 flash('This email already has an account. Sign in or contact portal support.')
-        return render_template('register.html')
+        chosen=session.get('application')
+        return render_template('register.html',application_course=db.session.get(Course,chosen.get('course_id')) if chosen else None,step=2)
 
     def throttled(key):
         key = hashlib.sha256(key.encode()).hexdigest()
@@ -900,7 +1144,15 @@ def create_app(config=None):
         registered = set(db.session.scalars(select(ClassRegistration.class_id).where(ClassRegistration.student_id == g.student.id)))
         announcements = db.session.scalars(public_updates().order_by(PublicUpdate.publish_at.desc()).limit(12)).all()
         lessons=db.session.scalars(select(Lesson).where(Lesson.course_id.in_(course_ids),Lesson.published.is_(True),Lesson.available_at<=now()).order_by(Lesson.course_id,Lesson.position,Lesson.id)).all()
+        progress={e.course_id:(learning_progress(g.student.id,e.course_id) if e.course_id in course_ids else
+            {'lessons':[],'completed':set(),'done':0,'total':0,'percent':0,'resume':None}) for e in enrollments}
+        upcoming=[item for item in classes if aware(item.starts_at)>=now()]
+        featured=paid[0] if paid else (enrollments[0] if enrollments else None)
+        next_class=min(upcoming,key=lambda item:aware(item.starts_at)) if upcoming else None
+        next_assignment=next((item for item in sorted(assessments,key=lambda item:aware(item.due_at) if item.due_at else now()+timedelta(days=3650)) if item.id not in submissions),None)
         return render_template('portal.html', enrollments=enrollments, paid_course_ids=set(course_ids), paid=paid,
+            progress=progress,featured=featured,next_class=next_class,next_assignment=next_assignment,
+            certificates=db.session.scalars(select(Certificate).where(Certificate.student_id==g.student.id)).all(),
             lessons=lessons,
             courses=db.session.scalars(published_courses()).all(), cohorts=upcoming_cohorts(),
             classes=classes, recordings=recordings, announcements=announcements,
@@ -1022,7 +1274,34 @@ def create_app(config=None):
         if request.method == 'POST':
             try:
                 action = field('action', 30)
-                if action in ('create_lesson','edit_lesson'):
+                if action=='course_price':
+                    course=db.get_or_404(Course,int(field('course_id',20)));country=field('country',80);currency=field('currency',3)
+                    count=int(field('installments',2))
+                    if country not in COUNTRIES or currency not in CURRENCIES or not 1<=count<=24:raise ValueError('Choose a country, currency and 1–24 monthly installments.')
+                    total=money_value(field('total',20))
+                    if total/Decimal(count)<Decimal('.01'):raise ValueError('Installments must be at least 0.01.')
+                    price=db.session.get(CoursePrice,(course.id,country)) or CoursePrice(course_id=course.id,country=country)
+                    price.currency,price.total,price.installments=currency,total,count;db.session.add(price)
+                    price.full_url=valid_url(field('full_url',3000,False),True)
+                    price.installment_url=valid_url(field('installment_url',3000,False),True)
+                elif action=='record_payment':
+                    enrollment=db.get_or_404(Enrollment,int(field('enrollment_id',20)))
+                    reference=field('reference',150)
+                    record_payment_entry(enrollment,reference,field('amount',20),field('currency',3),utc_field('received_at',True))
+                    enrollment.payment_reference=enrollment.payment_reference or reference
+                    enrollment.payment_status,enrollment.verified_at='verified',enrollment.verified_at or now()
+                elif action=='growth_goal':
+                    target=int(field('students',6))
+                    if not 1<=target<=999999:raise ValueError('Choose a target from 1 to 999999 students.')
+                    goal=db.session.get(GrowthGoal,2027);goal.students=target
+                elif action=='issue_certificate':
+                    enrollment=db.get_or_404(Enrollment,int(field('enrollment_id',20)))
+                    state=learning_progress(enrollment.student_id,enrollment.course_id)
+                    if enrollment.status!='approved' or enrollment.payment_status!='verified' or not state['total'] or state['done']!=state['total']:raise ValueError('Certificates require confirmed paid enrollment and completion of all released lessons.')
+                    if not db.session.scalar(select(Certificate.id).where(Certificate.student_id==enrollment.student_id,Certificate.course_id==enrollment.course_id)):
+                        db.session.add(Certificate(student_id=enrollment.student_id,course_id=enrollment.course_id))
+                        notify(enrollment.student_id,'Your certificate is ready',f'Your {enrollment.course.name} completion certificate is available in your account.')
+                elif action in ('create_lesson','edit_lesson'):
                     course=db.get_or_404(Course,int(field('course_id',20)))
                     title,module,body=field('title',150),field('module',100,False),field('body',20000,False)
                     position=int(field('position',4))
@@ -1100,6 +1379,8 @@ def create_app(config=None):
                             raise ValueError('The student must submit a payment reference before you verify payment.')
                         enrollment.payment_status = 'verified'
                         enrollment.verified_at = enrollment.verified_at or now()
+                        if request.form.get('amount','').strip():
+                            record_payment_entry(enrollment,enrollment.payment_reference,field('amount',20),field('currency',3))
                         if action == 'verify_and_approve':
                             confirm_enrollment(enrollment)
                     elif action == 'approve':
@@ -1176,8 +1457,12 @@ def create_app(config=None):
             except (ValueError, IntegrityError) as exc:
                 db.session.rollback()
                 flash(str(exc) if isinstance(exc, ValueError) else 'That record already exists. Check the details.')
-            return redirect(url_for('admin'))
-        return render_template('admin.html', next_dates=next_start_dates(), students=db.session.scalars(select(Student).order_by(Student.created_at.desc())).all(),
+            view=request.form.get('return_view','dashboard')
+            return redirect(url_for('admin',view=view) if view in ('dashboard','students','enrollments','payments','programs','classes','materials','announcements','reports','settings') else url_for('admin'))
+        view=request.args.get('view','dashboard')
+        if view not in ('dashboard','students','enrollments','payments','programs','classes','materials','announcements','reports','settings'):abort(404)
+        return render_template('admin.html', admin_view=view,overview=admin_overview(),prices=db.session.scalars(select(CoursePrice)).all(),
+            certificates=db.session.scalars(select(Certificate)).all(),next_dates=next_start_dates(), students=db.session.scalars(select(Student).order_by(Student.created_at.desc())).all(),
             lessons=db.session.scalars(select(Lesson).order_by(Lesson.course_id,Lesson.position,Lesson.id)).all(),
             lesson_assets=db.session.scalars(select(Asset).where(Asset.ready.is_(True),Asset.archived.is_(False),Asset.purpose=='lesson').order_by(Asset.created_at.desc())).all(),
             branding_assets=db.session.scalars(select(Asset).where(Asset.ready.is_(True),Asset.archived.is_(False),Asset.purpose=='branding').order_by(Asset.created_at.desc())).all(),

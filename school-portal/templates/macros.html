@@ -6,7 +6,7 @@
   <p>{{ course.description }}</p>
   <dl>
     <div><dt>Duration</dt><dd>{{ course.profile.duration or 'Contact LionTech for the program duration.' }}</dd></div>
-    <div><dt>Tuition · {{ country }}</dt><dd>{{ course.profile.tuition.get(country) or course.profile.tuition.get('Other') or 'Contact LionTech for current tuition and payment options.' }}</dd></div>
+    <div><dt>Tuition · {{ country }}</dt><dd>{% set offer=offer_for(course.id,country) %}{% if offer %}{{ offer.currency }} {{ '%.2f'|format(offer.total) }}{% if offer.installments>1 %} · {{ offer.installments }} monthly payments available{% endif %}{% else %}{{ course.profile.tuition.get(country) or course.profile.tuition.get('Other') or 'Contact LionTech for current tuition and payment options.' }}{% endif %}</dd></div>
     <div><dt>Schedule</dt><dd>New batches start every Saturday and Sunday. {{ course.profile.schedule or 'Your class time and timezone will be confirmed by LionTech.' }}</dd></div>
   </dl>
   <h4>Curriculum</h4>
@@ -16,3 +16,5 @@
   <p class="muted">Dates follow Toronto time. Each date is a separate batch start.</p>
 </div>
 {% endmacro %}
+{% macro icon(name) %}<svg class="ui-icon" aria-hidden="true"><use href="{{ url_for('static',filename='icons.svg') }}#{{ name }}"></use></svg>{% endmacro %}
+{% macro program_icon(slug) %}{{ icon('reports' if slug=='data-analytics' else ('code' if slug=='devops' else ('cloud' if slug=='cloud-computing' else ('shield' if slug=='cybersecurity' else 'programs')))) }}{% endmacro %}

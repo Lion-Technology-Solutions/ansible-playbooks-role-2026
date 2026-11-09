@@ -1,4 +1,4 @@
-{% set payment=course_payment(e.course,g.student.country) %}
+{% set payment=enrollment_checkout(e) %}
 <div class="payment-box" id="payment-{{ e.id }}"><h4>Payment methods &amp; enrollment confirmation</h4><p>Payment status: <strong>{{ e.payment_status|replace('_',' ')|title }}</strong></p>
 {% if e.payment_status=='verified' %}
   <p>Payment verified by your administrator.</p>{% if e.status=='approved' %}<p class="status success">Enrollment confirmed · Class access unlocked</p>{% else %}<p>Payment received. Your enrollment is awaiting final approval.</p>{% endif %}

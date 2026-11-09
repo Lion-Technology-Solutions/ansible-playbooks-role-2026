@@ -81,16 +81,16 @@ def test_receipt_does_not_unlock_and_admin_combined_approval_does(app):
 
 def test_approval_button_and_no_reference_guard(app):
     student,manager,course,eid,lesson,rid=setup_pending(app)
-    page=manager.get('/admin')
+    page=manager.get('/admin?view=enrollments')
     assert b'disabled aria-disabled="true">Approve enrollment' in page.data
     page=post(manager,'/admin',action='verify_and_approve',enrollment_id=eid)
     assert b'must submit a payment reference' in page.data
     with app.app_context():
         assert db.session.get(Enrollment,eid).payment_status=='unpaid'
     post(student,f'/enrollment/{eid}/payment',reference='VERIFY-SEPARATELY')
-    assert b'Verify payment &amp; approve enrollment' in manager.get('/admin').data
+    assert b'Verify payment &amp; approve enrollment' in manager.get('/admin?view=enrollments').data
     post(manager,'/admin',action='verify_payment',enrollment_id=eid)
-    assert b'class="button blue">Approve enrollment' in manager.get('/admin').data
+    assert b'class="button blue">Approve enrollment' in manager.get('/admin?view=enrollments').data
     assert_locked(student,course,lesson,rid)
     post(manager,'/admin',action='approve',enrollment_id=eid)
     assert student.get(f'/class/{lesson}/join').status_code==302
@@ -143,7 +143,7 @@ def test_account_notification_saved_for_every_kind_and_backfilled_once(app):
         assert len(list(db.session.scalars(select(AccountRequest))))==3
         assert len(list(db.session.scalars(select(Enrollment))))==0
     admin(manager)
-    page=manager.get('/admin')
+    page=manager.get('/admin?view=settings')
     assert b'Automatic WhatsApp delivery is not connected' in page.data
     assert b'new-request%40example.com' in page.data and b'old-request%40example.com' in page.data
     assert b'https://wa.me/14375756656' in page.data

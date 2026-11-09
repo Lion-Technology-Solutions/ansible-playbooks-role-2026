@@ -156,7 +156,7 @@ def test_classes_attendance_and_whatsapp(app):
     with app.app_context():
         assert len(db.session.scalars(select(Attendance)).all())==1
         assert len(db.session.scalars(select(ClassRegistration)).all())==1
-    assert b'Excel live class' in manager.get('/admin').data
+    assert b'Excel live class' in manager.get('/admin?view=classes').data
 
 
 def test_recordings_notifications_schedule_and_grading(app):
@@ -176,7 +176,7 @@ def test_recordings_notifications_schedule_and_grading(app):
         assessment_id=db.session.scalar(select(Assessment.id))
     page=student.post(f'/assessment/{assessment_id}/submit',data={'csrf':csrf(student,'/portal'),'answer':'<script>alert(1)</script> SELECT * FROM learners','url':'https://github.com/example/project'},follow_redirects=True)
     assert page.status_code == 200
-    admin_page=manager.get('/admin')
+    admin_page=manager.get('/admin?view=classes')
     assert b'&lt;script&gt;' in admin_page.data and b'<script>alert' not in admin_page.data
     with app.app_context():
         submission_id=db.session.scalar(select(Submission.id))
