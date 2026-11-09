@@ -1,3 +1,56 @@
-{% extends 'base.html' %}{% from 'macros.html' import token,external with context %}{% block title %}My enrollments{% endblock %}{% block content %}<div class="page-heading"><div><p class="eyebrow">WELCOME, {{ g.student.name }}</p><h1>Your learning starts here.</h1><p>Choose your course, complete enrollment payment, and submit the reference for verification.</p></div><span class="status {{ 'success' if g.student.approved else 'pending' }}">{{ 'Portal approved' if g.student.approved else 'Awaiting enrollment approval' }}</span></div>
-{% if requested %}<h2>My enrollment requests</h2><section class="two-col">{% for e in requested %}<article class="panel"><div class="heading-row"><h3>{{ e.course.name }}</h3><span class="status {{ 'success' if e.status == 'approved' else 'pending' }}">{{ e.status|title }}</span></div><p>{{ g.student.country }} · {{ 'Existing student' if g.student.kind == 'existing' else 'New student' }}</p>{% if g.student.kind == 'new' %}<p>Start date: {{ e.cohort.start_date.strftime('%B %d, %Y') if e.cohort else 'Next intake date requested — support will confirm' }}</p>{% endif %}<div class="payment-box"><strong>Enrollment payment · {{ e.payment_status|replace('_',' ')|title }}</strong>{% if e.payment_status == 'verified' %}<p>Payment verified by your administrator.</p>{% if e.status == 'approved' %}<a class="button blue" href="{{ url_for('portal') }}">Open my portal →</a>{% else %}<p>Awaiting final portal approval.</p>{% endif %}{% else %}{% if payment %}<p>{{ payment[1] }}{% if g.student.country == 'Cameroon' %}. This is part of your first installment.{% endif %}</p>{{ external(payment[0],payment[1],'red') }}{% else %}<p>Contact support to arrange the enrollment fee for your country.</p>{{ external(support_url,'Arrange enrollment payment','outline') }}{% endif %}<p class="muted">After payment, submit the Flutterwave transaction reference below. Clicking the payment link does not confirm payment.</p><form action="{{ url_for('payment',enrollment_id=e.id) }}" method="post">{{ token() }}<label>Payment / transaction reference<input name="reference" maxlength="150" value="{{ e.payment_reference or '' }}" required></label><label>Payment details for the administrator<textarea name="note" maxlength="1000" rows="2" placeholder="Payer name, payment date, or any details needed to find your receipt">{{ e.payment_note }}</textarea></label><button class="button blue">{{ 'Update payment reference' if e.payment_status == 'submitted' else 'Submit payment for verification' }}</button></form>{% endif %}</div></article>{% endfor %}</section>{% endif %}
-<div class="section-heading"><div><p class="eyebrow">EXPLORE THE PROGRAMS</p><h2>Choose your next skill.</h2></div>{% if g.student.kind == 'existing' %}<p>Existing student · Start-date selection is skipped.</p>{% else %}<p>New student · Select an available intake below.</p>{% endif %}</div><section class="course-grid">{% for c in courses %}<article class="course-card"><p class="pill">LIVE · ONLINE</p><h3>{{ c.name }}</h3><p>{{ c.description }}</p><p class="skills">{{ c.skills }}</p>{% if c.id in requested_ids %}<span class="status success">Enrollment already requested</span>{% else %}<form method="post">{{ token() }}<input type="hidden" name="course_id" value="{{ c.id }}">{% if g.student.kind == 'new' %}{% set starts=cohorts|selectattr('course_id','equalto',c.id)|list %}{% if starts %}<label>Available start dates<select name="cohort_id" required><option value="">Choose your intake</option>{% for start in starts %}<option value="{{ start.id }}">{{ start.start_date.strftime('%B %d, %Y') }} · {{ start.label }}</option>{% endfor %}</select></label>{% else %}<p class="muted">New intake dates will be confirmed by support. You can request a place now.</p>{% endif %}{% endif %}<button class="button blue">Enroll in {{ c.name }} →</button></form>{% endif %}</article>{% endfor %}</section>{% endblock %}
+{% extends 'base.html' %}
+{% from 'macros.html' import token, external, program_details with context %}
+{% block title %}My account &amp; enrollments{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <div><p class="eyebrow">WELCOME, {{ g.student.name }}</p><h1>Your learning starts here.</h1><p>Choose your program and review the tuition, curriculum, and upcoming batches.</p></div>
+  <span class="status {{ 'success' if g.student.approved else 'pending' }}">{{ 'Portal approved' if g.student.approved else 'Awaiting enrollment approval' }}</span>
+</div>
+<section class="panel account-summary">
+  <div><p class="eyebrow">YOUR STUDENT NUMBER</p><strong class="student-number">{{ g.student.student_number }}</strong><p>{{ g.student.kind|title }} student · {{ g.student.country }}</p></div>
+  <div><h3>Request your account review</h3><p>Your account is listed in the administrator dashboard. You can also send your student number to LionTech on WhatsApp.</p>{{ external(account_request_url, 'Send account request on WhatsApp', 'outline') }}<p class="muted">Open WhatsApp and tap Send to deliver this request.</p></div>
+</section>
+{% if requested %}
+<h2>My selected programs</h2>
+<section class="two-col">
+{% for e in requested %}
+<article class="panel">
+  <div class="heading-row"><h3>{{ e.course.name }}</h3><span class="status {{ 'success' if e.status == 'approved' else 'pending' }}">{{ e.status|title }}</span></div>
+  {% if g.student.kind == 'new' %}<p><strong>Your selected start:</strong> {{ e.cohort.start_date.strftime('%A, %B %d, %Y') if e.cohort else 'Contact support to confirm your start date.' }}</p>{% endif %}
+  {{ program_details(e.course, g.student.country, cohorts) }}
+  <div class="payment-box"><strong>Enrollment payment · {{ e.payment_status|replace('_',' ')|title }}</strong>
+  {% if e.payment_status == 'verified' %}
+    <p>Payment verified by your administrator.</p>
+    {% if e.status == 'approved' %}<a class="button blue" href="{{ url_for('portal') }}">Open my portal →</a>{% else %}<p>Awaiting final portal approval.</p>{% endif %}
+  {% else %}
+    {% if payment %}<p>{{ payment[1] }}{% if g.student.country == 'Cameroon' %}. This is part of your first installment.{% endif %}</p>{{ external(payment[0],payment[1],'red') }}
+    {% else %}<p>Contact support to arrange the enrollment fee for your country.</p>{{ external(support_url,'Arrange enrollment payment','outline') }}{% endif %}
+    <p class="muted">After payment, submit your Flutterwave transaction reference. Clicking the payment link does not confirm payment.</p>
+    <form action="{{ url_for('payment',enrollment_id=e.id) }}" method="post">{{ token() }}
+      <label>Payment / transaction reference<input name="reference" maxlength="150" value="{{ e.payment_reference or '' }}" required></label>
+      <label>Payment details for the administrator<textarea name="note" maxlength="1000" rows="2" placeholder="Payer name, payment date, or details to find your receipt">{{ e.payment_note }}</textarea></label>
+      <button class="button blue">{{ 'Update payment reference' if e.payment_status == 'submitted' else 'Submit payment for verification' }}</button>
+    </form>
+  {% endif %}</div>
+</article>
+{% endfor %}
+</section>
+{% endif %}
+<div class="section-heading"><div><p class="eyebrow">EXPLORE THE PROGRAMS</p><h2>Choose your next skill.</h2></div><p>New batches every Saturday and Sunday.</p></div>
+<section class="two-col">
+{% for c in courses %}
+<article class="panel">
+  <p class="pill">LIVE · ONLINE</p><h3>{{ c.name }}</h3>
+  {{ program_details(c, g.student.country, cohorts) }}
+  {% if c.id in requested_ids %}<span class="status success">Enrollment already requested</span>
+  {% else %}
+  <form method="post">{{ token() }}<input type="hidden" name="course_id" value="{{ c.id }}">
+    {% if g.student.kind == 'new' %}<label>Choose your batch start<select name="cohort_id" required><option value="">Choose your intake</option>{% for start in cohorts if start.course_id == c.id %}<option value="{{ start.id }}">{{ start.start_date.strftime('%A, %B %d, %Y') }}</option>{% endfor %}</select></label>
+    {% else %}<p class="muted">Existing students continue with their current batch; a new start date is not required.</p>{% endif %}
+    <button class="button blue">Enroll in {{ c.name }} →</button>
+  </form>
+  {% endif %}
+</article>
+{% endfor %}
+</section>
+{% endblock %}

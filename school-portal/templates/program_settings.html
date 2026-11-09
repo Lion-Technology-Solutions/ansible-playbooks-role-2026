@@ -1,0 +1,17 @@
+<section class="panel program-settings" id="program-settings">
+  <p class="eyebrow">PROGRAM INFORMATION</p><h2>Tuition, schedules &amp; curriculum</h2>
+  <p>These details appear on student accounts before and after program selection. Enter class times with their timezone. Leave an unconfirmed detail blank to direct students to support.</p>
+  {% for course in courses %}
+  <details><summary>{{ course.name }}</summary>
+    <form method="post">{{ token() }}
+      <input type="hidden" name="action" value="program_profile"><input type="hidden" name="course_id" value="{{ course.id }}">
+      <label>Program duration<input name="duration" maxlength="150" value="{{ course.profile.duration }}" placeholder="e.g. 3 months"></label>
+      <label>Class schedule and timezone<textarea name="schedule" maxlength="500" rows="2" placeholder="Enter the confirmed days, times and timezone">{{ course.profile.schedule }}</textarea></label>
+      <label>Curriculum · one topic per line<textarea name="curriculum" maxlength="10000" rows="6">{{ course.profile.curriculum }}</textarea></label>
+      <h4>Tuition by country</h4><p class="muted">Include currency, total or monthly amount, duration, and any enrollment fee. Other is the fallback for countries without their own published price.</p>
+      <div class="two-col">{% for country in countries %}<label>{{ country }}<textarea name="tuition_{{ loop.index0 }}" maxlength="1500" rows="3">{{ course.profile.tuition.get(country, '') }}</textarea></label>{% endfor %}</div>
+      <button class="button blue">Save {{ course.name }} details</button>
+    </form>
+  </details>
+  {% endfor %}
+</section>

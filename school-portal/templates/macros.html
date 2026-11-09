@@ -1,3 +1,18 @@
 {% macro token() %}<input type="hidden" name="csrf" value="{{ csrf }}">{% endmacro %}
 {% macro course_select(courses) %}<label>Course<select name="course_id" required>{% for course in courses %}<option value="{{ course.id }}">{{ course.name }}</option>{% endfor %}</select></label>{% endmacro %}
 {% macro external(url, label, style='') %}<a class="button {{ style }}" href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ label }} <span aria-hidden="true">↗</span></a>{% endmacro %}
+{% macro program_details(course, country, starts) %}
+<div class="program-details">
+  <p>{{ course.description }}</p>
+  <dl>
+    <div><dt>Duration</dt><dd>{{ course.profile.duration or 'Contact LionTech for the program duration.' }}</dd></div>
+    <div><dt>Tuition · {{ country }}</dt><dd>{{ course.profile.tuition.get(country) or course.profile.tuition.get('Other') or 'Contact LionTech for current tuition and payment options.' }}</dd></div>
+    <div><dt>Schedule</dt><dd>New batches start every Saturday and Sunday. {{ course.profile.schedule or 'Your class time and timezone will be confirmed by LionTech.' }}</dd></div>
+  </dl>
+  <h4>Curriculum</h4>
+  {% if course.profile.curriculum %}<ul>{% for topic in course.profile.curriculum.splitlines() if topic.strip() %}<li>{{ topic }}</li>{% endfor %}</ul>{% else %}<p>Contact LionTech for the curriculum.</p>{% endif %}
+  <h4>Next two start dates</h4>
+  <div class="intake-dates">{% for start in starts if start.course_id == course.id %}<span class="intake-date">{{ start.start_date.strftime('%A, %B %d, %Y') }}</span>{% endfor %}</div>
+  <p class="muted">Dates follow Toronto time. Each date is a separate batch start.</p>
+</div>
+{% endmacro %}

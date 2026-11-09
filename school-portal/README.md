@@ -28,14 +28,24 @@ The application refuses to start without required variables. It requires Postgre
 
 ## Enrollment and payment approval
 
-1. Students register at `/register`, choose new/existing status, country, name, email, phone and password.
+1. Students register at `/register`, choose new/existing status, country, name, email, phone and password. Both types receive a permanent student number such as `LT-2026-000123`. Existing database accounts are backfilled additively on first startup; numbers remain stable across redeployments.
 2. At `/enrollments`, they request DevOps, Cybersecurity, Cloud Computing or Data Analytics.
-3. New students select an available intake. Data Analytics starts November 14, 2026, as supplied in the enrollment flyer. Other intake dates are not invented: the student can request a place and support confirms the next intake. Administrators can publish actual dates. Existing students skip intake selection.
+3. Every program offers new batches every Saturday and Sunday. The homepage and student account show exactly the next two future weekend dates using `America/Toronto`. Today is excluded because no universal batch cutoff time has been supplied. New students must select one of those dates; the server rejects expired, unoffered, or cross-program dates. Existing students retain their current batch and skip selection. Intakes are generated idempotently under a PostgreSQL advisory lock.
 4. Country-specific Flutterwave links appear after the enrollment request. Cameroon displays **2,000 FCFA toward the first installment**. Nigeria/Ghana use the supplied checkout links without inventing a fee. Other countries are directed to support to arrange payment.
 5. Students submit their transaction reference and optional payer/date details. Account access stays pending.
 6. At `/admin`, the administrator checks the transaction and correct fee in Flutterwave, selects **Confirm payment verified**, and then **Approve enrollment & portal**. Server-side rules enforce payment verification before approval. Reused transaction references are rejected.
 
 Payment verification is manual. There is no payment webhook/API credential configured. Opening checkout or submitting a reference never marks an account paid automatically. An existing-student declaration does not bypass payment verification or approval. Email ownership is not automatically verified; public signup creates a pending account only.
+
+## Program information and communication status
+
+The student account displays each selected program's duration, country-specific tuition, schedule, curriculum and next two starts. Administrators maintain these fields under **Tuition, schedules & curriculum**. The initial Data Analytics fees come from the supplied country flyers: Cameroon 10,000 FCFA/month and 30,000 total with 2,000 toward the first installment; Nigeria ₦19,900/month and ₦2,500 enrollment; Ghana approximately GH₵198/month and GH₵594 total with GH₵20 toward the first installment (exchange-rate dependent). Other program prices, durations and class times remain explicitly unconfirmed until the administrator publishes them. Existing descriptions supply the initial curriculum topics; they are editable.
+
+Account creation records are visible in the administrator dashboard immediately. An interim account-request WhatsApp link includes the student number and name and targets +1 437-575-6656. It requires the student to tap Send. It is **not** automatic message delivery.
+
+**Pending external setup:** The owner selected Twilio for WhatsApp notifications and OTP, and Twilio SendGrid for approval/payment-link emails. Neither service is connected to this Vercel project. No OTP generation/verification endpoint, automatic WhatsApp sender, or approval email delivery is implemented or claimed active in this version. There is no fake-code or email-sent fallback. Complete provider setup before implementing and enabling these flows. Use Twilio Verify's WhatsApp channel with send/check rate limits; use an approved WhatsApp notification template for administrator account requests. SendGrid needs a verified sender/domain. Configure credentials privately in Vercel, never in Git or chat.
+
+The next messaging change must distinguish account approval/payment invitation from paid enrollment access: an approval email containing a payment link should not silently bypass the existing payment verification gate. Confirm the intended stage when connecting email delivery.
 
 ## Classes, resources and recordings
 
@@ -63,7 +73,7 @@ Admins publish assignment or quiz instructions for a course, with an optional du
 
 Student passwords are hashed with PBKDF2, sessions use secure/HTTP-only/SameSite cookies, forms require CSRF tokens, and queries use SQLAlchemy parameter binding. Student identity comes from the signed session, not form IDs. Password resets invalidate the student's existing sessions. Authentication attempts are rate-limited using the persistent database. An admin password rotation invalidates admin sessions; rotate `SCHOOL_ADMIN_PASSWORD` and redeploy. Never put credentials or private Zoom recording links in Git or build logs.
 
-Admin functions include reviewing pending enrollments, payment verification, approving/revoking course access, managing intake dates and course links, scheduling classes, publishing recordings and assessments, grading submissions, viewing attendance, and resetting student passwords.
+Admin functions include reviewing pending enrollments, payment verification, approving/revoking course access, editing program tuition, duration, schedule, curriculum and course links, scheduling classes, publishing recordings and assessments, grading submissions, viewing attendance, and resetting student passwords.
 
 ## Tests
 
@@ -75,7 +85,7 @@ pip install -r school-portal/requirements.txt pytest==8.4.2
 pytest school-portal/tests -q
 ```
 
-Tests explicitly use isolated SQLite databases and check country-specific payment routing, dates/new-vs-existing handling, approval gates, duplicate payment references, student isolation, CSRF, class registration, attendance uniqueness and WhatsApp payloads, scheduled recordings, notifications, submissions/results, password resets, and revocation. Deployed verification checks the real PostgreSQL-backed health endpoint and the critical live user flows.
+Tests explicitly use isolated SQLite databases and check country-specific payment routing, dates/new-vs-existing handling, approval gates, duplicate payment references, student isolation, CSRF, class registration, attendance uniqueness and WhatsApp payloads, scheduled recordings, notifications, submissions/results, password resets, revocation, stable and backfilled student numbers, Saturday/Sunday rollover (including Toronto midnight and year-end), and editable country-specific program details. Deployed verification checks the real PostgreSQL-backed health endpoint and the critical live user flows.
 
 ## Local development
 

@@ -2,7 +2,7 @@ import re
 from datetime import date, timedelta
 from urllib.parse import parse_qs, urlsplit
 from sqlalchemy import select
-from app import db, Student, Course, Cohort, Enrollment, ClassSession, ClassRegistration, Attendance, Recording, Assessment, Submission, Notification, now
+from app import db, Student, StudentIdentity, ProgramProfile, Course, Cohort, Enrollment, ClassSession, ClassRegistration, Attendance, Recording, Assessment, Submission, Notification, now, next_start_dates, seed
 
 
 def csrf(client, path='/login'):
@@ -28,7 +28,7 @@ def admin(client):
 def analytics(app):
     with app.app_context():
         c = db.session.scalar(select(Course).where(Course.slug == 'data-analytics'))
-        cohort = db.session.scalar(select(Cohort).where(Cohort.course_id == c.id))
+        cohort = db.session.scalar(select(Cohort).where(Cohort.course_id == c.id, Cohort.start_date.in_(next_start_dates())).order_by(Cohort.start_date))
         return c.id, cohort.id
 
 
@@ -51,7 +51,7 @@ def test_home_brand_courses_and_access_gate(app):
     client = app.test_client()
     page = client.get('/')
     assert page.status_code == 200
-    for content in [b'DevOps', b'Cybersecurity', b'Cloud Computing', b'Data Analytics', b'November 14, 2026', b'14375756656']:
+    for content in [b'DevOps', b'Cybersecurity', b'Cloud Computing', b'Data Analytics', next_start_dates()[0].strftime('%b %d, %Y').encode(), b'14375756656']:
         assert content in page.data
     assert client.get('/health').json == {'status':'ok','storage':'test-sqlite'}
     assert client.get('/admin').status_code == 302
@@ -217,3 +217,100 @@ def test_invalid_and_duplicate_references_and_cross_course_dates(app):
     post(one,f'/enrollment/{ids[0]}/payment',reference='REUSED-REF')
     page=post(two,f'/enrollment/{ids[1]}/payment',reference='REUSED-REF')
     assert b'already been submitted' in page.data
+
+
+def test_student_numbers_for_new_existing_and_legacy_accounts(app):
+    new_client, existing_client = app.test_client(), app.test_client()
+    new_page = register(new_client, 'new-number@example.com')
+    old_page = register(existing_client, 'existing-number@example.com', kind='existing')
+    with app.app_context():
+        students = list(db.session.scalars(select(Student).order_by(Student.created_at)))
+        numbers = [student.student_number for student in students]
+        assert len(set(numbers)) == 2
+        assert all(re.fullmatch(r'LT-\d{4}-\d{6,}', number) for number in numbers)
+        assert numbers[0].encode() in new_page.data
+        assert numbers[1].encode() in old_page.data
+        # Simulate an account created before the student-number feature.
+        legacy = Student(name='Legacy student',email='legacy@example.com',phone='+237600000001',
+                         country='Cameroon',kind='existing',password_hash='not-an-auth-test')
+        db.session.add(legacy)
+        db.session.commit()
+        legacy_id = legacy.id
+        with db.engine.begin() as connection:
+            seed(connection)
+        db.session.expire_all()
+        legacy_number = db.session.get(Student, legacy_id).student_number
+        assert re.fullmatch(r'LT-\d{4}-\d{6,}', legacy_number)
+        with db.engine.begin() as connection:
+            seed(connection)
+        db.session.expire_all()
+        assert db.session.get(Student,legacy_id).student_number == legacy_number
+        assert len(list(db.session.scalars(select(StudentIdentity.student_id)))) == 3
+        assert [db.session.get(Student,s.id).student_number for s in students] == numbers
+    link = re.search(rb'href="(https://wa.me/14375756656\?text=LionTech\+student[^\"]+)"',new_page.data)[1].decode()
+    message = parse_qs(urlsplit(link).query)['text'][0]
+    assert numbers[0] in message and 'Student Example' in message
+    assert b'tap Send' in new_page.data
+
+
+def test_rolling_weekend_dates_and_toronto_midnight(monkeypatch):
+    from datetime import datetime, timezone
+    import app as portal_module
+    assert next_start_dates(date(2026,11,6)) == [date(2026,11,7),date(2026,11,8)]
+    assert next_start_dates(date(2026,11,7)) == [date(2026,11,8),date(2026,11,14)]
+    assert next_start_dates(date(2026,11,8)) == [date(2026,11,14),date(2026,11,15)]
+    assert next_start_dates(date(2026,12,31)) == [date(2027,1,2),date(2027,1,3)]
+    monkeypatch.setattr(portal_module, 'now', lambda: datetime(2026,11,8,1,0,tzinfo=timezone.utc))
+    assert portal_module.academy_today() == date(2026,11,7)
+    assert next_start_dates() == [date(2026,11,8),date(2026,11,14)]
+
+
+def test_every_program_has_two_starts_and_rejects_unoffered_date(app):
+    student = app.test_client()
+    register(student)
+    page = student.get('/enrollments')
+    with app.app_context():
+        courses = list(db.session.scalars(select(Course)))
+        for course in courses:
+            dates = list(db.session.scalars(select(Cohort.start_date).where(Cohort.course_id==course.id).order_by(Cohort.start_date)))
+            assert dates == next_start_dates()
+        devops = next(c for c in courses if c.slug=='devops')
+        analytics_course = next(c for c in courses if c.slug=='data-analytics')
+        db.session.add(Cohort(course_id=devops.id, start_date=date(2020,1,1), label='Old intake'))
+        db.session.commit()
+        old_id = db.session.scalar(select(Cohort.id).where(Cohort.start_date==date(2020,1,1)))
+        other_id = db.session.scalar(select(Cohort.id).where(Cohort.course_id==analytics_course.id))
+        devops_id = devops.id
+    assert b'Choose a valid upcoming start date' in request_enrollment(student,devops_id,old_id).data
+    assert b'Choose a valid upcoming start date' in request_enrollment(student,devops_id,other_id).data
+    for start in next_start_dates():
+        assert start.strftime('%A, %B %d, %Y').encode() in page.data
+    with app.app_context():
+        assert db.session.scalar(select(Enrollment.id)) is None
+
+
+def test_country_tuition_selected_program_details_and_admin_edit(app):
+    student,manager = app.test_client(),app.test_client()
+    register(student)
+    admin(manager)
+    course,cohort = analytics(app)
+    page = request_enrollment(student,course,cohort)
+    assert b'30,000 FCFA' in page.data and b'3 months' in page.data
+    assert b'Curriculum' in page.data and b'Power BI' in page.data
+    assert b'My selected programs' in page.data
+    assert b'Saturday and Sunday' in page.data
+    tuition_fields = {'tuition_'+str(i):'' for i in range(7)}
+    tuition_fields['tuition_0']='12,000 FCFA per month'
+    post(manager,'/admin',action='program_profile',course_id=course,duration='4 months',
+         schedule='Saturday and Sunday, 4–6 PM America/Toronto',curriculum='Excel\nSQL\nCapstone project',**tuition_fields)
+    page = student.get('/enrollments')
+    assert b'12,000 FCFA per month' in page.data and b'4 months' in page.data
+    assert '4–6 PM America/Toronto'.encode() in page.data and b'Capstone project' in page.data
+    assert b'30,000 FCFA' not in page.data
+    # A future cold start must preserve the administrator's edited content.
+    with app.app_context():
+        with db.engine.begin() as connection:
+            seed(connection)
+        db.session.expire_all()
+        assert db.session.get(ProgramProfile,course).duration=='4 months'
+    assert student.post('/admin',data={'csrf':csrf(student,'/enrollments'),'action':'program_profile','course_id':course,'duration':'Forged'}).status_code==302

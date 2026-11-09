@@ -8,6 +8,7 @@ import threading
 from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from urllib.parse import urlencode, urlsplit
+from zoneinfo import ZoneInfo
 
 from flask import Flask, abort, flash, g, redirect, render_template, request, session, url_for
 from flask_sqlalchemy import SQLAlchemy
@@ -48,6 +49,19 @@ class Student(db.Model):
     password_hash = db.Column(db.Text, nullable=False)
     approved = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
+    identity = db.relationship('StudentIdentity', back_populates='student', uselist=False)
+
+    @property
+    def student_number(self):
+        return f'LT-{self.created_at.year}-{self.identity.id:06d}' if self.identity else 'Pending number'
+
+
+class StudentIdentity(db.Model):
+    """Additive table: existing student rows never need a destructive migration."""
+    __tablename__ = 'portal_student_identities'
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.String(36), db.ForeignKey('portal_students.id'), unique=True, nullable=False)
+    student = db.relationship(Student, back_populates='identity')
 
 
 class Course(db.Model):
@@ -59,6 +73,16 @@ class Course(db.Model):
     skills = db.Column(db.Text, nullable=False)
     registration_url = db.Column(db.Text, default='', nullable=False)
     resources_url = db.Column(db.Text, default='', nullable=False)
+    profile = db.relationship('ProgramProfile', uselist=False)
+
+
+class ProgramProfile(db.Model):
+    __tablename__ = 'portal_program_profiles'
+    course_id = db.Column(db.Integer, db.ForeignKey('portal_courses.id'), primary_key=True)
+    duration = db.Column(db.String(150), default='', nullable=False)
+    schedule = db.Column(db.String(500), default='', nullable=False)
+    curriculum = db.Column(db.Text, default='', nullable=False)
+    tuition = db.Column(db.JSON, default=dict, nullable=False)
 
 
 class Cohort(db.Model):
@@ -187,9 +211,22 @@ def seed(connection):
                 registration_url='https://us06web.zoom.us/meeting/register/yBAAj2k5TM2lEqpMXZY3ZQ' if slug == 'data-analytics' else '',
                 resources_url='https://drive.google.com/drive/folders/186T95HhFghqKXATdxzXvvu43OWSmBFL2?usp=sharing' if slug == 'data-analytics' else ''))
     analytics = connection.execute(select(table.c.id).where(table.c.slug == 'data-analytics')).scalar_one()
-    cohort = Cohort.__table__
-    if not connection.execute(select(cohort.c.id).where(cohort.c.course_id == analytics, cohort.c.start_date == date(2026, 11, 14))).first():
-        connection.execute(cohort.insert().values(course_id=analytics, start_date=date(2026, 11, 14), label='November 2026 intake'))
+    profile = ProgramProfile.__table__
+    for course in connection.execute(select(table)).mappings():
+        if not connection.execute(select(profile.c.course_id).where(profile.c.course_id == course['id'])).first():
+            is_analytics = course['slug'] == 'data-analytics'
+            connection.execute(profile.insert().values(course_id=course['id'], duration='3 months' if is_analytics else '',
+                schedule='', curriculum='\n'.join(course['skills'].split(' · ')), tuition={
+                    'Cameroon': '10,000 FCFA per month · 30,000 FCFA total over 3 months. Start with 2,000 FCFA toward your first installment; pay the remaining 8,000 FCFA after your first class.',
+                    'Nigeria': '₦19,900 per month for 3 months. Enrollment fee: ₦2,500.',
+                    'Ghana': 'Approximately GH₵198 per month · GH₵594 total over 3 months. Start with GH₵20 toward your first installment. Estimates may vary with exchange rates.',
+                } if is_analytics else {}))
+    identities = StudentIdentity.__table__
+    # The caller holds the schema advisory lock, so parallel cold starts cannot
+    # assign two numbers to an existing account. Issued numbers are never reused.
+    for sid in connection.execute(select(Student.id).order_by(Student.created_at, Student.id)).scalars():
+        if not connection.execute(select(identities.c.id).where(identities.c.student_id == sid)).first():
+            connection.execute(identities.insert().values(student_id=sid))
     recording = os.environ.get('INITIAL_ANALYTICS_RECORDING_URL', '')
     if recording and not connection.execute(select(Recording.id).where(Recording.seed_key == 'initial-data-analytics')).first():
         connection.execute(Recording.__table__.insert().values(course_id=analytics, title='Latest Data Analytics class', url=recording,
@@ -223,6 +260,34 @@ def utc_field(name, optional=False):
 
 def whatsapp(message):
     return 'https://wa.me/' + SUPPORT + '?' + urlencode({'text': message})
+
+
+def academy_today():
+    return now().astimezone(ZoneInfo('America/Toronto')).date()
+
+
+def next_start_dates(today=None):
+    """The next two future Saturday/Sunday starts, in the academy's timezone."""
+    day = today or academy_today()
+    dates = []
+    while len(dates) < 2:
+        day += timedelta(days=1)
+        if day.weekday() in (5, 6):
+            dates.append(day)
+    return dates
+
+
+def upcoming_cohorts():
+    dates = next_start_dates()
+    with db.engine.begin() as connection:
+        if connection.dialect.name == 'postgresql':
+            connection.execute(text('SELECT pg_advisory_xact_lock(73592027)'))
+        table = Cohort.__table__
+        for course_id in connection.execute(select(Course.id)).scalars():
+            for start in dates:
+                if not connection.execute(select(table.c.id).where(table.c.course_id == course_id, table.c.start_date == start)).first():
+                    connection.execute(table.insert().values(course_id=course_id, start_date=start, label='Weekend intake'))
+    return db.session.scalars(select(Cohort).where(Cohort.start_date.in_(dates)).order_by(Cohort.start_date)).all()
 
 
 def create_app(config=None):
@@ -293,8 +358,10 @@ def create_app(config=None):
     @app.context_processor
     def context():
         session.setdefault('csrf', secrets.token_hex(24))
+        account_request_url = whatsapp(f'LionTech student account creation request\nStudent number: {g.student.student_number}\nName: {g.student.name}\nStudent type: {g.student.kind}\nPlease review my account in the administrator dashboard.') if g.student else ''
         return dict(csrf=session['csrf'], support_url=whatsapp('Hello LionTech Academy, I need help with my student portal.'),
-                    completion_url=whatsapp('Project completed'), countries=COUNTRIES, payments=PAYMENTS, utcnow=now(), aware=aware)
+                    completion_url=whatsapp('Project completed'), account_request_url=account_request_url,
+                    countries=COUNTRIES, payments=PAYMENTS, utcnow=now(), aware=aware)
 
     def student_required(approved=False):
         def decorate(fn):
@@ -333,7 +400,7 @@ def create_app(config=None):
     @app.get('/')
     def home():
         courses = db.session.scalars(select(Course).order_by(Course.id)).all()
-        cohorts = db.session.scalars(select(Cohort).where(Cohort.start_date >= date.today()).order_by(Cohort.start_date)).all()
+        cohorts = upcoming_cohorts()
         return render_template('home.html', courses=courses, cohorts=cohorts)
 
     @app.route('/register', methods=['GET', 'POST'])
@@ -350,12 +417,14 @@ def create_app(config=None):
                 student = Student(name=name, email=email, phone=phone, country=country, kind=kind,
                     password_hash=generate_password_hash(password, method='pbkdf2:sha256:600000'))
                 db.session.add(student)
+                db.session.flush()
+                db.session.add(StudentIdentity(student_id=student.id))
                 db.session.commit()
                 session.clear()
                 session['student_id'] = student.id
                 session['student_auth'] = hmac.new(app.secret_key.encode(), student.password_hash.encode(), 'sha256').hexdigest()
                 session.permanent = True
-                flash('Your account is created. Choose a course and complete enrollment to request portal approval.')
+                flash(f'Your account is created. Your student number is {student.student_number}. Choose a course to continue.')
                 return redirect(url_for('enrollments'))
             except ValueError as exc:
                 flash(str(exc))
@@ -432,19 +501,18 @@ def create_app(config=None):
     @app.route('/enrollments', methods=['GET', 'POST'])
     @student_required()
     def enrollments():
+        cohorts = upcoming_cohorts()
         if request.method == 'POST':
             try:
                 course = db.get_or_404(Course, int(field('course_id', 20)))
                 cohort_id = request.form.get('cohort_id', '')
                 cohort = None
                 if g.student.kind == 'new':
-                    cohorts = db.session.scalars(select(Cohort).where(Cohort.course_id == course.id, Cohort.start_date >= date.today())).all()
-                    if cohorts:
-                        if not cohort_id:
-                            raise ValueError('Choose an available start date for your course.')
-                        cohort = db.get_or_404(Cohort, int(cohort_id))
-                        if cohort.course_id != course.id or cohort.start_date < date.today():
-                            raise ValueError('Choose a valid upcoming start date.')
+                    if not cohort_id:
+                        raise ValueError('Choose an available start date for your course.')
+                    cohort = db.get_or_404(Cohort, int(cohort_id))
+                    if cohort.course_id != course.id or cohort.start_date not in next_start_dates():
+                        raise ValueError('Choose a valid upcoming start date.')
                 enrollment = Enrollment(student_id=g.student.id, course_id=course.id, cohort_id=cohort.id if cohort else None)
                 db.session.add(enrollment)
                 db.session.commit()
@@ -455,7 +523,6 @@ def create_app(config=None):
             return redirect(url_for('enrollments'))
         requested = db.session.scalars(select(Enrollment).where(Enrollment.student_id == g.student.id).order_by(Enrollment.id)).all()
         courses = db.session.scalars(select(Course).order_by(Course.id)).all()
-        cohorts = db.session.scalars(select(Cohort).where(Cohort.start_date >= date.today()).order_by(Cohort.start_date)).all()
         return render_template('enrollments.html', requested=requested, courses=courses, cohorts=cohorts,
             requested_ids={e.course_id for e in requested}, payment=PAYMENTS.get(g.student.country))
 
@@ -526,7 +593,7 @@ def create_app(config=None):
                     record = Attendance(student_id=g.student.id, class_id=lesson.id)
                     db.session.add(record)
                     db.session.commit()
-                message = f'LionTech class attendance\nName: {g.student.name}\nCourse: {lesson.course.name}\nClass: {lesson.title}\nClass date (UTC): {aware(lesson.starts_at).strftime("%Y-%m-%d %H:%M")}\nAttendance ID: {record.id}\nStatus: Present'
+                message = f'LionTech class attendance\nStudent number: {g.student.student_number}\nName: {g.student.name}\nCourse: {lesson.course.name}\nClass: {lesson.title}\nClass date (UTC): {aware(lesson.starts_at).strftime("%Y-%m-%d %H:%M")}\nAttendance ID: {record.id}\nStatus: Present'
                 return render_template('attendance_saved.html', record=record, attendance_whatsapp=whatsapp(message))
             except ValueError:
                 flash('Choose a valid class.')
@@ -606,6 +673,13 @@ def create_app(config=None):
                     course = db.get_or_404(Course, int(field('course_id', 20)))
                     course.registration_url = valid_url(field('registration_url', 3000, False), True)
                     course.resources_url = valid_url(field('resources_url', 3000, False), True)
+                elif action == 'program_profile':
+                    course = db.get_or_404(Course, int(field('course_id', 20)))
+                    course.profile.duration = field('duration', 150, False)
+                    course.profile.schedule = field('schedule', 500, False)
+                    course.profile.curriculum = field('curriculum', 10000, False)
+                    course.profile.tuition = {country: field('tuition_' + str(index), 1500, False)
+                                             for index, country in enumerate(COUNTRIES)}
                 elif action == 'class':
                     course = db.get_or_404(Course, int(field('course_id', 20)))
                     db.session.add(ClassSession(course_id=course.id, title=field('title', 150), starts_at=utc_field('starts_at'),
@@ -646,7 +720,7 @@ def create_app(config=None):
                 db.session.rollback()
                 flash(str(exc) if isinstance(exc, ValueError) else 'That record already exists. Check the details.')
             return redirect(url_for('admin'))
-        return render_template('admin.html', students=db.session.scalars(select(Student).order_by(Student.created_at.desc())).all(),
+        return render_template('admin.html', next_dates=next_start_dates(), students=db.session.scalars(select(Student).order_by(Student.created_at.desc())).all(),
             enrollments=db.session.scalars(select(Enrollment).order_by(Enrollment.created_at.desc())).all(),
             courses=db.session.scalars(select(Course).order_by(Course.id)).all(),
             cohorts=db.session.scalars(select(Cohort).order_by(Cohort.start_date)).all(),
