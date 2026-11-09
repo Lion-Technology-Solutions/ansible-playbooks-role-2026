@@ -86,9 +86,31 @@ At `/attendance`, students can record attendance only for a paid, confirmed cour
 
 All support and project-completed links use the same supplied WhatsApp number. Attendance is stored even if WhatsApp is unavailable. No automated WhatsApp Business API is configured.
 
+## Lessons, uploaded files and branding
+
+The administrator manages **Lessons**, **File library**, and **Branding** from the dashboard. Files are stored in the private Vercel Blob store `liontech-portal-files` (`store_5FD6wadWX2PK1f5h`, iad1); `BLOB_READ_WRITE_TOKEN` was provisioned by the store connection. File and lesson metadata remain in PostgreSQL. No upload bytes, credentials or teaching materials are stored in Git or the function filesystem.
+
+### Workflow
+
+1. Open **File library**. Select **Lesson materials** or **Branding images**, choose one or more files, and keep the page open until uploads finish. Progress is shown; failed parts retry up to twice. Completed files remain saved if another file fails. An interrupted incomplete upload can be archived and restarted.
+2. The library supports title changes, administrator downloads/previews, and reversible archive/restore. Archiving hides a lesson file from students immediately. It does not permanently delete its stored bytes.
+3. Create an ordered lesson under a course, add module/unit and notes, select completed library files, then save a draft or publish/schedule it. One file can be reused in several lessons. Private admin previews work before publication.
+4. Paid, confirmed students see eligible lessons under **My lessons & files**. Images display inline; audio and video have browser players with seeking. Office documents and PDFs download to the student's device. Media whose codec is unsupported in a browser can still be downloaded; the app does not transcode videos or render Office documents.
+5. Under **Branding**, set the portal name, footer tagline, primary/accent colors, logo and homepage banner. Upload PNG/JPG/WebP using the branding purpose first. Selecting a logo/banner explicitly publishes only that selected image through `/brand/logo` or `/brand/banner`; unrelated assets stay private. Removing the selection restores the original default. Remove a selected image from branding before archiving it.
+
+Supported formats: PDF, XLSX/XLS/CSV, PPTX/PPT, DOCX/DOC/TXT, PNG/JPG/JPEG/WebP/GIF, MP4/WebM/MOV/M4V, MP3/WAV/OGG/M4A/AAC/FLAC. Documents are limited to 50 MiB, images to 10 MiB and 20 million pixels, and audio/video to 250 MiB per file. Branding accepts PNG/JPG/WebP only. Images are decoded and checked before they become usable. Upload extensions/MIME types are allowlisted; files are never executed by the application. No malware scanner is configured.
+
+### Upload and delivery design
+
+The synchronous Python SDK does not support client upload token generation or signed URLs. The app uses its real private Blob put/get operations, storing each upload as ordered 3 MiB objects. Each upload request stays below Vercel's request payload limit. The server assigns storage paths, verifies per-part sizes and SHA-256 hashes, accepts identical part retries idempotently, and marks an asset ready only after all parts are present. Client completion requests cannot register arbitrary external URLs or storage paths.
+
+`/files/<asset_id>` authenticates the administrator or checks that the student has a verified, approved enrollment in a course with a published, released lesson referencing that active asset. Unpaid, cross-course, draft, scheduled and archived content is denied. HTTP byte ranges and HEAD are supported for media seeking; body data streams in bounded chunks. Raw Blob paths and credentials never go to students. Every new content/upload mutation requires an administrator session and CSRF token. Selected branding images are the explicit public exception.
+
+New tables are additive: `portal_assets`, `portal_asset_chunks`, `portal_lessons`, `portal_lesson_files`, and `portal_site_branding`. First startup seeds default branding once; future deployments preserve administrator edits.
+
 ## Assignments, quizzes and results
 
-Admins publish assignment or quiz instructions for a course, with an optional due date. Students submit text answers and an optional project/document/file link. Admins review, assign 0–100, and publish feedback. Results and a notification appear in the student's own portal. Updating an answer clears the previous grade and returns the submission for review. Quizzes are instructor-reviewed, not automatically scored multiple-choice exams. Uploaded files are represented by student-supplied sharing links; the portal does not store file binaries.
+Admins publish assignment or quiz instructions for a course, with an optional due date. Students submit text answers and an optional project/document/file link. Admins review, assign 0–100, and publish feedback. Results and a notification appear in the student's own portal. Updating an answer clears the previous grade and returns the submission for review. Quizzes are instructor-reviewed, not automatically scored multiple-choice exams. Student assignment submissions still use sharing links. Administrator lesson materials use the uploaded-file library described above; student binary assignment uploads are not enabled.
 
 ## Authentication and administration
 
@@ -106,7 +128,7 @@ pip install -r school-portal/requirements.txt pytest==8.4.2
 pytest school-portal/tests -q
 ```
 
-Tests explicitly use isolated SQLite databases and check country-specific payment routing, dates/new-vs-existing handling, approval gates, duplicate payment references, student isolation, CSRF, class registration, attendance uniqueness and WhatsApp payloads, scheduled recordings, notifications, submissions/results, password resets, revocation, stable and backfilled student numbers, Saturday/Sunday rollover (including Toronto midnight and year-end), editable country-specific program details, admin-only course/content publishing, private previews, duplicate URL labels, per-course checkout isolation, scheduled events, escaped announcements, preserving enrolled access after unpublishing, automatic account activation, per-course payment gates, direct protected-route checks, combined and separate admin approval, recording-notice revocation, class joining links, and idempotent saved support notifications. Deployed verification checks the real PostgreSQL-backed health endpoint and the critical live user flows.
+Tests explicitly use isolated SQLite databases and check country-specific payment routing, dates/new-vs-existing handling, approval gates, duplicate payment references, student isolation, CSRF, class registration, attendance uniqueness and WhatsApp payloads, scheduled recordings, notifications, submissions/results, password resets, revocation, stable and backfilled student numbers, Saturday/Sunday rollover (including Toronto midnight and year-end), editable country-specific program details, admin-only course/content publishing, private previews, duplicate URL labels, per-course checkout isolation, scheduled events, escaped announcements, preserving enrolled access after unpublishing, automatic account activation, per-course payment gates, direct protected-route checks, combined and separate admin approval, recording-notice revocation, class joining links, idempotent saved support notifications, real-storage adapter boundaries, chunk assembly/retry/integrity, byte-range responses, lesson scheduling/access, file archive/restore and public-branding isolation. Deployed verification checks the real PostgreSQL-backed health endpoint and the critical live user flows.
 
 ## Local development
 

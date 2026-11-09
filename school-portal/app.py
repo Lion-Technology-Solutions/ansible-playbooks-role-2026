@@ -10,12 +10,14 @@ from functools import wraps
 from urllib.parse import urlencode, urlsplit
 from zoneinfo import ZoneInfo
 
-from flask import Flask, abort, flash, g, redirect, render_template, request, session, url_for
+from flask import Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, session, url_for
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import UniqueConstraint, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
 from werkzeug.security import check_password_hash, generate_password_hash
+from vercel.blob import BlobError
+from file_storage import CHUNK_SIZE, FORM_LIMIT, PrivateBlobStorage, byte_range, validate_upload, validate_image
 
 UTC = timezone.utc
 db = SQLAlchemy()
@@ -117,6 +119,61 @@ class ProgramProfile(db.Model):
     schedule = db.Column(db.String(500), default='', nullable=False)
     curriculum = db.Column(db.Text, default='', nullable=False)
     tuition = db.Column(db.JSON, default=dict, nullable=False)
+
+
+class Asset(db.Model):
+    __tablename__ = 'portal_assets'
+    id = db.Column(db.String(32), primary_key=True, default=lambda: secrets.token_hex(16))
+    title = db.Column(db.String(180), nullable=False)
+    filename = db.Column(db.String(180), nullable=False)
+    mime = db.Column(db.String(150), nullable=False)
+    size = db.Column(db.Integer, nullable=False)
+    purpose = db.Column(db.String(15), nullable=False)
+    ready = db.Column(db.Boolean, default=False, nullable=False)
+    archived = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
+    chunks = db.relationship('AssetChunk', order_by='AssetChunk.part')
+
+
+class AssetChunk(db.Model):
+    __tablename__ = 'portal_asset_chunks'
+    asset_id = db.Column(db.String(32), db.ForeignKey('portal_assets.id'), primary_key=True)
+    part = db.Column(db.Integer, primary_key=True)
+    pathname = db.Column(db.Text, nullable=False)
+    size = db.Column(db.Integer, nullable=False)
+    digest = db.Column(db.String(64), nullable=False)
+
+
+class Lesson(db.Model):
+    __tablename__ = 'portal_lessons'
+    id = db.Column(db.Integer, primary_key=True)
+    course_id = db.Column(db.Integer, db.ForeignKey('portal_courses.id'), nullable=False)
+    title = db.Column(db.String(150), nullable=False)
+    module = db.Column(db.String(100), default='', nullable=False)
+    body = db.Column(db.Text, default='', nullable=False)
+    position = db.Column(db.Integer, default=1, nullable=False)
+    published = db.Column(db.Boolean, default=False, nullable=False)
+    available_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
+    course = db.relationship(Course)
+    attachments = db.relationship('LessonFile', order_by='LessonFile.asset_id')
+
+
+class LessonFile(db.Model):
+    __tablename__ = 'portal_lesson_files'
+    lesson_id = db.Column(db.Integer, db.ForeignKey('portal_lessons.id'), primary_key=True)
+    asset_id = db.Column(db.String(32), db.ForeignKey('portal_assets.id'), primary_key=True)
+    asset = db.relationship(Asset)
+
+
+class SiteBranding(db.Model):
+    __tablename__ = 'portal_site_branding'
+    id = db.Column(db.Integer, primary_key=True)
+    site_name = db.Column(db.String(100), default='LionTech Academy', nullable=False)
+    tagline = db.Column(db.String(250), default='Practical skills. Real projects. A stronger future.', nullable=False)
+    primary_color = db.Column(db.String(7), default='#061d62', nullable=False)
+    accent_color = db.Column(db.String(7), default='#ffea00', nullable=False)
+    logo_asset_id = db.Column(db.String(32), db.ForeignKey('portal_assets.id'))
+    banner_asset_id = db.Column(db.String(32), db.ForeignKey('portal_assets.id'))
 
 
 class Cohort(db.Model):
@@ -246,6 +303,8 @@ class LoginAttempt(db.Model):
 def seed(connection):
     """Idempotent bootstrap under the schema transaction/advisory lock."""
     table = Course.__table__
+    if not connection.execute(select(SiteBranding.id).where(SiteBranding.id==1)).first():
+        connection.execute(SiteBranding.__table__.insert().values(id=1))
     for slug, name, description, skills in COURSES:
         if not connection.execute(select(table.c.id).where(table.c.slug == slug)).first():
             connection.execute(table.insert().values(slug=slug, name=name, description=description, skills=skills,
@@ -381,6 +440,7 @@ def create_app(config=None):
         SESSION_COOKIE_SECURE=not testing, SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax',
         PERMANENT_SESSION_LIFETIME=timedelta(hours=4), MAX_CONTENT_LENGTH=65536,
         ADMIN_PASSWORD=os.environ.get('SCHOOL_ADMIN_PASSWORD', ''), TESTING=testing,
+        FILE_STORAGE=PrivateBlobStorage(),
     )
     if config:
         app.config.update(config)
@@ -419,8 +479,10 @@ def create_app(config=None):
             if not hmac.compare_digest(admin_token.encode(), session.get('admin_auth', '').encode()):
                 session.clear()
         if request.method == 'POST':
+            if request.endpoint == 'asset_chunk':
+                request.max_content_length = FORM_LIMIT
             token = session.get('csrf', '')
-            if not token or not hmac.compare_digest(token.encode(), request.form.get('csrf', '').encode()):
+            if not token or not hmac.compare_digest(token.encode(), (request.headers.get('X-CSRF-Token') or request.form.get('csrf', '')).encode()):
                 abort(400, 'Your form expired. Reload the page and try again.')
 
     @app.after_request
@@ -429,7 +491,7 @@ def create_app(config=None):
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
         response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'; base-uri 'self'"
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'"
         return response
 
     @app.context_processor
@@ -438,7 +500,8 @@ def create_app(config=None):
         account_request_url = account_whatsapp(g.student) if g.student else ''
         return dict(csrf=session['csrf'], support_url=whatsapp('Hello LionTech Academy, I need help with my student portal.'),
                     completion_url=whatsapp('Project completed'), account_request_url=account_request_url,
-                    countries=COUNTRIES, payments=PAYMENTS, course_payment=course_payment, account_whatsapp=account_whatsapp, utcnow=now(), aware=aware)
+                    countries=COUNTRIES, payments=PAYMENTS, course_payment=course_payment, account_whatsapp=account_whatsapp,
+                    branding=db.session.get(SiteBranding,1), utcnow=now(), aware=aware)
 
     def student_required():
         def decorate(fn):
@@ -476,6 +539,157 @@ def create_app(config=None):
         for recording in db.session.scalars(select(Recording).where(Recording.course_id == enrollment.course_id)):
             if not db.session.scalar(select(Notification).where(Notification.student_id == enrollment.student_id, Notification.recording_id == recording.id)):
                 notify(enrollment.student_id, 'Class recording available', recording.title, recording.available_at, recording.id)
+
+    def asset_response(asset, download=False):
+        try:
+            start,end,status=byte_range(request.headers.get('Range'),asset.size)
+        except ValueError:
+            return Response(status=416,headers={'Content-Range':f'bytes */{asset.size}'})
+        chunks=[(c.part,c.pathname,c.size,c.digest) for c in asset.chunks if c.part*CHUNK_SIZE<=end and (c.part+1)*CHUNK_SIZE>start]
+        def content():
+            for part,path,size,digest in chunks:
+                data=app.config['FILE_STORAGE'].get(path)
+                if len(data)!=size or hashlib.sha256(data).hexdigest()!=digest:
+                    raise RuntimeError('Stored file integrity check failed.')
+                offset=part*CHUNK_SIZE
+                selected=data[max(0,start-offset):min(size,end-offset+1)]
+                for index in range(0,len(selected),65536):
+                    yield selected[index:index+65536]
+        headers={'Content-Length':str(end-start+1),'Accept-Ranges':'bytes',
+                 'Content-Disposition':f'{"attachment" if download or not asset.mime.startswith(("image/","audio/","video/")) else "inline"}; filename="{asset.filename}"'}
+        if status==206: headers['Content-Range']=f'bytes {start}-{end}/{asset.size}'
+        return Response(content() if request.method!='HEAD' else (),status=status,headers=headers,content_type=asset.mime)
+
+    @app.get('/admin/library')
+    @admin_required
+    def file_library():
+        show_archived=request.args.get('archived')=='1'
+        assets=db.session.scalars(select(Asset).where(Asset.archived==show_archived).order_by(Asset.created_at.desc())).all()
+        return render_template('file_library.html',assets=assets,show_archived=show_archived,chunk_size=CHUNK_SIZE)
+
+    @app.post('/admin/assets/start')
+    @admin_required
+    def asset_start():
+        try:
+            size=int(field('size',20))
+            name,mime=validate_upload(field('filename',250),size,field('purpose',15))
+            asset=Asset(title=name,filename=name,mime=mime,size=size,purpose=request.form['purpose'])
+            db.session.add(asset)
+            db.session.commit()
+            return jsonify(id=asset.id,chunk_size=CHUNK_SIZE,parts=(size+CHUNK_SIZE-1)//CHUNK_SIZE)
+        except ValueError as error:
+            return jsonify(error=str(error)),400
+
+    @app.post('/admin/assets/<asset_id>/chunks/<int:part>')
+    @admin_required
+    def asset_chunk(asset_id,part):
+        asset=db.get_or_404(Asset,asset_id)
+        if asset.ready or asset.archived: return jsonify(error='This upload is closed.'),409
+        parts=(asset.size+CHUNK_SIZE-1)//CHUNK_SIZE
+        if part>=parts: return jsonify(error='Invalid upload part.'),400
+        data=request.get_data()
+        expected=min(CHUNK_SIZE,asset.size-part*CHUNK_SIZE)
+        if len(data)!=expected: return jsonify(error='The upload part has the wrong size.'),400
+        digest=hashlib.sha256(data).hexdigest()
+        existing=db.session.get(AssetChunk,(asset.id,part))
+        if existing:
+            return (jsonify(saved=True),200) if existing.digest==digest else (jsonify(error='This part already contains different data. Start a new upload.'),409)
+        try:
+            pathname=app.config['FILE_STORAGE'].put(f'portal-files/{asset.id}/{part:04d}-{digest}.bin',data)
+            db.session.add(AssetChunk(asset_id=asset.id,part=part,pathname=pathname,size=len(data),digest=digest))
+            db.session.commit()
+            return jsonify(saved=True)
+        except BlobError:
+            db.session.rollback()
+            return jsonify(error='File storage is temporarily unavailable. Retry this upload.'),503
+        except IntegrityError:
+            db.session.rollback()
+            existing=db.session.get(AssetChunk,(asset.id,part))
+            return (jsonify(saved=True),200) if existing and existing.digest==digest else (jsonify(error='Upload conflict. Start a new upload.'),409)
+
+    @app.post('/admin/assets/<asset_id>/finish')
+    @admin_required
+    def asset_finish(asset_id):
+        asset=db.session.scalar(select(Asset).where(Asset.id==asset_id).with_for_update())
+        if not asset or asset.archived: abort(404)
+        if asset.ready: return jsonify(ready=True)
+        parts=(asset.size+CHUNK_SIZE-1)//CHUNK_SIZE
+        if len(asset.chunks)!=parts or sum(c.size for c in asset.chunks)!=asset.size or [c.part for c in asset.chunks]!=list(range(parts)):
+            return jsonify(error='Some upload parts are missing. Resume the upload before completing it.'),400
+        try:
+            if asset.mime.startswith('image/'):
+                validate_image(b''.join(app.config['FILE_STORAGE'].get(c.pathname) for c in asset.chunks),asset.mime)
+            asset.ready=True
+            db.session.commit()
+            return jsonify(ready=True)
+        except ValueError as error:
+            db.session.rollback()
+            return jsonify(error=str(error)),400
+        except BlobError:
+            db.session.rollback()
+            return jsonify(error='File storage is temporarily unavailable.'),503
+
+    @app.post('/admin/assets/<asset_id>/manage')
+    @admin_required
+    def asset_manage(asset_id):
+        asset=db.get_or_404(Asset,asset_id)
+        try:
+            action=field('action',20)
+            if action=='rename':
+                asset.title=field('title',180)
+            elif action in ('archive','restore'):
+                branding=db.session.get(SiteBranding,1)
+                if action=='archive' and asset.id in (branding.logo_asset_id,branding.banner_asset_id):
+                    raise ValueError('Remove this image from branding settings before archiving it.')
+                asset.archived=action=='archive'
+            else:
+                raise ValueError('Choose rename, archive or restore.')
+            db.session.commit()
+            flash('File updated.')
+        except ValueError as error:
+            db.session.rollback()
+            flash(str(error))
+        return redirect(url_for('file_library'))
+
+    @app.route('/files/<asset_id>',methods=['GET','HEAD'])
+    def asset_content(asset_id):
+        asset=db.get_or_404(Asset,asset_id)
+        if not asset.ready: abort(404)
+        if not session.get('admin'):
+            if not g.student: return redirect(url_for('login'))
+            if asset.archived or asset.purpose!='lesson': abort(403)
+            allowed=db.session.scalar(select(LessonFile.lesson_id).join(Lesson,Lesson.id==LessonFile.lesson_id).join(Enrollment,Enrollment.course_id==Lesson.course_id).where(
+                LessonFile.asset_id==asset.id,Lesson.published.is_(True),Lesson.available_at<=now(),
+                Enrollment.student_id==g.student.id,Enrollment.status=='approved',Enrollment.payment_status=='verified').limit(1))
+            if not allowed: abort(403)
+        return asset_response(asset,request.args.get('download')=='1')
+
+    @app.get('/lessons/<int:lesson_id>')
+    @student_required()
+    def lesson_page(lesson_id):
+        lesson=db.get_or_404(Lesson,lesson_id)
+        if not lesson.published or aware(lesson.available_at)>now(): abort(404)
+        if not enrollment_for(lesson.course_id): abort(403)
+        return render_template('lesson_page.html',lesson=lesson,preview=False)
+
+    @app.get('/admin/lessons/<int:lesson_id>/preview')
+    @admin_required
+    def lesson_preview(lesson_id):
+        return render_template('lesson_page.html',lesson=db.get_or_404(Lesson,lesson_id),preview=True)
+
+    @app.route('/brand/<slot>',methods=['GET','HEAD'])
+    def brand_image(slot):
+        branding=db.session.get(SiteBranding,1)
+        asset_id={'logo':branding.logo_asset_id,'banner':branding.banner_asset_id}.get(slot)
+        asset=db.session.get(Asset,asset_id) if asset_id else None
+        if not asset or not asset.ready or asset.archived or asset.purpose!='branding' or not asset.mime.startswith('image/'):
+            abort(404)
+        return asset_response(asset)
+
+    @app.get('/branding.css')
+    def branding_css():
+        branding=db.session.get(SiteBranding,1)
+        return Response(f'header{{background:{branding.primary_color}}}.hero{{background:linear-gradient(120deg,{branding.primary_color},#1453de)}}.button.blue{{background:{branding.primary_color}}}.button.yellow,.nav-cta{{background:{branding.accent_color}}}.hero em,.auth-story em{{color:{branding.accent_color}}}',content_type='text/css')
 
     @app.get('/health')
     def health():
@@ -685,7 +899,9 @@ def create_app(config=None):
             db.or_(Notification.recording_id.is_(None), Notification.recording_id.in_(allowed_recordings))).order_by(Notification.id.desc()).limit(20)).all()
         registered = set(db.session.scalars(select(ClassRegistration.class_id).where(ClassRegistration.student_id == g.student.id)))
         announcements = db.session.scalars(public_updates().order_by(PublicUpdate.publish_at.desc()).limit(12)).all()
+        lessons=db.session.scalars(select(Lesson).where(Lesson.course_id.in_(course_ids),Lesson.published.is_(True),Lesson.available_at<=now()).order_by(Lesson.course_id,Lesson.position,Lesson.id)).all()
         return render_template('portal.html', enrollments=enrollments, paid_course_ids=set(course_ids), paid=paid,
+            lessons=lessons,
             courses=db.session.scalars(published_courses()).all(), cohorts=upcoming_cohorts(),
             classes=classes, recordings=recordings, announcements=announcements,
             assessments=assessments, submissions=submissions, notices=notices, registered=registered)
@@ -806,7 +1022,40 @@ def create_app(config=None):
         if request.method == 'POST':
             try:
                 action = field('action', 30)
-                if action in ('create_course', 'edit_course'):
+                if action in ('create_lesson','edit_lesson'):
+                    course=db.get_or_404(Course,int(field('course_id',20)))
+                    title,module,body=field('title',150),field('module',100,False),field('body',20000,False)
+                    position=int(field('position',4))
+                    state=field('publication_state',20)
+                    if state not in ('draft','published') or not 1<=position<=9999:
+                        raise ValueError('Choose a publication state and lesson position from 1 to 9999.')
+                    ids=set(request.form.getlist('file_ids'))
+                    if len(ids)>100: raise ValueError('Attach up to 100 files per lesson.')
+                    selected=db.session.scalars(select(Asset).where(Asset.id.in_(ids),Asset.ready.is_(True),Asset.archived.is_(False),Asset.purpose=='lesson')).all()
+                    if len(selected)!=len(ids): raise ValueError('Choose completed, active lesson files from the library.')
+                    lesson=Lesson() if action=='create_lesson' else db.get_or_404(Lesson,int(field('lesson_id',20)))
+                    lesson.course_id,lesson.title,lesson.module,lesson.body=course.id,title,module,body
+                    lesson.position,lesson.published,lesson.available_at=position,state=='published',utc_field('available_at',True) or now()
+                    db.session.add(lesson)
+                    db.session.flush()
+                    db.session.query(LessonFile).filter_by(lesson_id=lesson.id).delete(synchronize_session=False)
+                    for asset in selected: db.session.add(LessonFile(lesson_id=lesson.id,asset_id=asset.id))
+                elif action=='branding':
+                    branding=db.session.get(SiteBranding,1)
+                    primary,accent=field('primary_color',7),field('accent_color',7)
+                    if not all(re.fullmatch(r'#[0-9a-fA-F]{6}',color) for color in (primary,accent)):
+                        raise ValueError('Choose valid six-digit hex colors.')
+                    chosen=[]
+                    for key in ('logo_asset_id','banner_asset_id'):
+                        value=field(key,32,False)
+                        asset=db.session.get(Asset,value) if value else None
+                        if value and (not asset or not asset.ready or asset.archived or asset.purpose!='branding'):
+                            raise ValueError('Choose a completed branding image from the library.')
+                        chosen.append(value or None)
+                    branding.site_name,branding.tagline=field('site_name',100),field('tagline',250,False)
+                    branding.primary_color,branding.accent_color=primary,accent
+                    branding.logo_asset_id,branding.banner_asset_id=chosen
+                elif action in ('create_course', 'edit_course'):
                     name, description, skills = field('name'), field('description', 3000), field('skills', 500)
                     state = field('publication_state', 20)
                     if state not in ('draft', 'published'):
@@ -929,6 +1178,9 @@ def create_app(config=None):
                 flash(str(exc) if isinstance(exc, ValueError) else 'That record already exists. Check the details.')
             return redirect(url_for('admin'))
         return render_template('admin.html', next_dates=next_start_dates(), students=db.session.scalars(select(Student).order_by(Student.created_at.desc())).all(),
+            lessons=db.session.scalars(select(Lesson).order_by(Lesson.course_id,Lesson.position,Lesson.id)).all(),
+            lesson_assets=db.session.scalars(select(Asset).where(Asset.ready.is_(True),Asset.archived.is_(False),Asset.purpose=='lesson').order_by(Asset.created_at.desc())).all(),
+            branding_assets=db.session.scalars(select(Asset).where(Asset.ready.is_(True),Asset.archived.is_(False),Asset.purpose=='branding').order_by(Asset.created_at.desc())).all(),
             account_requests=db.session.scalars(select(AccountRequest).order_by(AccountRequest.created_at.desc())).all(),
             public_content=db.session.scalars(select(PublicUpdate).order_by(PublicUpdate.updated_at.desc())).all(),
             enrollments=db.session.scalars(select(Enrollment).order_by(Enrollment.created_at.desc())).all(),
