@@ -1,0 +1,6 @@
+{% extends 'base.html' %}
+{% block title %}Events &amp; news{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">WHAT’S HAPPENING AT LIONTECH</p><h1>Events &amp; news.</h1><p>Discover workshops, webinars, and the latest academy announcements.</p></div></div>
+<section class="two-col">{% for item in items %}{% include 'update_card.html' %}{% else %}<article class="panel"><h2>Stay connected.</h2><p>New events and announcements will appear here when published.</p><a href="{{ support_url }}" target="_blank" rel="noopener">Ask about upcoming events ↗</a></article>{% endfor %}</section>
+{% endblock %}

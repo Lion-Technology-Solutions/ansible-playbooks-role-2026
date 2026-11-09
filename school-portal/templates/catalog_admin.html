@@ -1,0 +1,28 @@
+<section class="panel" id="catalog">
+  <p class="eyebrow">COURSE CATALOG</p><h2>Create &amp; publish courses</h2>
+  <p>Drafts are private. Publishing puts a course on the homepage and makes it available for enrollment immediately. Unpublishing hides it from new applicants; enrolled students retain their learning access.</p>
+  <details class="editor"><summary>Add a new course</summary>
+    <form method="post">{{ token() }}<input type="hidden" name="action" value="create_course">
+      <label>Course name<input name="name" maxlength="100" required></label>
+      <label>URL label (optional)<input name="slug" maxlength="60" placeholder="e.g. business-data-analysis"><small>Generated from the name if left blank. Must be unique.</small></label>
+      <label>Course overview<textarea name="description" rows="3" maxlength="3000" required></textarea></label>
+      <label>Key skills<input name="skills" maxlength="500" placeholder="Excel · SQL · Power BI" required></label>
+      <div class="two-col"><label>Duration<input name="duration" maxlength="150"></label><label>Schedule and timezone<input name="schedule" maxlength="500"></label></div>
+      <label>Curriculum · one topic per line<textarea name="curriculum" rows="5" maxlength="10000"></textarea></label>
+      <p class="muted">After saving, set tuition, country payment links, Zoom registration and resources in the sections below. New courses do not inherit another program’s checkout links.</p>
+      <div class="actions"><button class="button outline" name="publication_state" value="draft">Save draft</button><button class="button blue" name="publication_state" value="published">Create &amp; publish course</button></div>
+    </form>
+  </details>
+  <h3>Your courses</h3>
+  {% for c in courses %}
+  <details class="editor"><summary>{{ c.name }} · {{ 'Published' if c.publication.published else 'Draft' }}</summary>
+    <p>URL: /courses/{{ c.slug }}</p><p><a href="{{ url_for('course_preview',course_id=c.id) }}" target="_blank" rel="noopener">Preview course ↗</a>{% if c.publication.published %} · <a href="{{ url_for('course_page',slug=c.slug) }}" target="_blank" rel="noopener">View public course ↗</a>{% endif %}</p>
+    <form method="post">{{ token() }}<input type="hidden" name="action" value="edit_course"><input type="hidden" name="course_id" value="{{ c.id }}">
+      <label>Course name<input name="name" maxlength="100" value="{{ c.name }}" required></label>
+      <label>Course overview<textarea name="description" maxlength="3000" rows="3" required>{{ c.description }}</textarea></label>
+      <label>Key skills<input name="skills" maxlength="500" value="{{ c.skills }}" required></label>
+      <div class="actions"><button class="button outline" name="publication_state" value="draft">Save draft / unpublish</button><button class="button blue" name="publication_state" value="published">{{ 'Save published course' if c.publication.published else 'Publish course' }}</button></div>
+    </form>
+  </details>
+  {% endfor %}
+</section>

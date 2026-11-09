@@ -1,0 +1,18 @@
+{% macro update_editor(item=none) %}
+<form method="post">{{ token() }}<input type="hidden" name="action" value="{{ 'edit_update' if item else 'create_update' }}">{% if item %}<input type="hidden" name="update_id" value="{{ item.id }}">{% endif %}
+  <div class="two-col"><label>Content type<select name="kind"><option value="event"{% if item and item.kind=='event' %} selected{% endif %}>Event / webinar / workshop</option><option value="announcement"{% if item and item.kind=='announcement' %} selected{% endif %}>Announcement / news</option></select></label><label>Title<input name="title" maxlength="150" value="{{ item.title if item else '' }}" required></label></div>
+  {% if not item %}<label>URL label (optional)<input name="slug" maxlength="60" placeholder="e.g. free-data-analytics-workshop"><small>Generated from the title if left blank. Must be unique.</small></label>{% endif %}
+  <label>Short summary<textarea name="summary" rows="2" maxlength="500" required>{{ item.summary if item else '' }}</textarea></label>
+  <label>Full description<textarea name="body" rows="6" maxlength="10000" required>{{ item.body if item else '' }}</textarea></label>
+  <p class="muted">For events, provide a start time. Enter all times in UTC; the public page also displays the visitor’s local time. Announcement dates and location are optional.</p>
+  <div class="two-col"><label>Event starts (UTC)<input type="datetime-local" name="starts_at" value="{{ aware(item.starts_at).strftime('%Y-%m-%dT%H:%M') if item and item.starts_at else '' }}"></label><label>Event ends (UTC, optional)<input type="datetime-local" name="ends_at" value="{{ aware(item.ends_at).strftime('%Y-%m-%dT%H:%M') if item and item.ends_at else '' }}"></label></div>
+  <label>Location / online platform<input name="location" maxlength="250" value="{{ item.location if item else '' }}" placeholder="Online via Zoom"></label>
+  <label>Registration or information link (optional)<input type="url" name="registration_url" maxlength="3000" value="{{ item.registration_url if item else '' }}"></label>
+  <label>Publish at (UTC, optional)<input type="datetime-local" name="publish_at" value="{{ aware(item.publish_at).strftime('%Y-%m-%dT%H:%M') if item else '' }}"><small>Leave blank to publish now. A future time schedules publication.</small></label>
+  <div class="actions"><button class="button outline" name="publication_state" value="draft">Save draft / unpublish</button><button class="button blue" name="publication_state" value="published">Publish / schedule</button></div>
+</form>
+{% endmacro %}
+<section class="panel" id="public-content"><p class="eyebrow">EVENTS &amp; NEWS</p><h2>Publish events &amp; announcements</h2><p>Manage webinars, workshops, open days, and academy news. Published content appears on the public Events &amp; news page. Upcoming events and the latest announcements also appear on the homepage.</p>
+  <details class="editor"><summary>Create an event or announcement</summary>{{ update_editor() }}</details>
+  {% for item in public_content %}<details class="editor"><summary>{{ item.title }} · {{ item.kind|title }} · {{ 'Scheduled' if item.published and aware(item.publish_at)>utcnow else ('Published' if item.published else 'Draft') }}</summary><p><a href="{{ url_for('update_preview',update_id=item.id) }}" target="_blank" rel="noopener">Preview ↗</a>{% if item.published and aware(item.publish_at)<=utcnow %} · <a href="{{ url_for('update_page',slug=item.slug) }}" target="_blank" rel="noopener">View public page ↗</a>{% endif %}</p>{{ update_editor(item) }}</details>{% else %}<p class="muted">No events or announcements yet.</p>{% endfor %}
+</section>

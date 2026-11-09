@@ -10,7 +10,7 @@
       <label>Curriculum · one topic per line<textarea name="curriculum" maxlength="10000" rows="6">{{ course.profile.curriculum }}</textarea></label>
       <h4>Tuition by country</h4><p class="muted">Include currency, total or monthly amount, duration, and any enrollment fee. Other is the fallback for countries without their own published price.</p>
       <div class="two-col">{% for country in countries %}<label>{{ country }}<textarea name="tuition_{{ loop.index0 }}" maxlength="1500" rows="3">{{ course.profile.tuition.get(country, '') }}</textarea></label>{% endfor %}</div>
-      <button class="button blue">Save {{ course.name }} details</button>
+      <h4>Enrollment payment links for this course</h4><p class="muted">Use the correct checkout link for this program and country. Leave blank to direct students to support. Other is the fallback link.</p><div class="two-col">{% for country in countries %}<label>{{ country }} checkout link<input type="url" name="payment_link_{{ loop.index0 }}" maxlength="3000" value="{{ course.publication.payment_links.get(country, '') }}" placeholder="https://..."></label>{% endfor %}</div><button class="button blue">Save {{ course.name }} details</button>
     </form>
   </details>
   {% endfor %}

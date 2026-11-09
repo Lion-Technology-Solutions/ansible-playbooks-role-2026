@@ -13,7 +13,7 @@
 {% if requested %}
 <h2>My selected programs</h2>
 <section class="two-col">
-{% for e in requested %}
+{% for e in requested %}{% set payment=course_payment(e.course,g.student.country) %}
 <article class="panel">
   <div class="heading-row"><h3>{{ e.course.name }}</h3><span class="status {{ 'success' if e.status == 'approved' else 'pending' }}">{{ e.status|title }}</span></div>
   {% if g.student.kind == 'new' %}<p><strong>Your selected start:</strong> {{ e.cohort.start_date.strftime('%A, %B %d, %Y') if e.cohort else 'Contact support to confirm your start date.' }}</p>{% endif %}
@@ -23,7 +23,7 @@
     <p>Payment verified by your administrator.</p>
     {% if e.status == 'approved' %}<a class="button blue" href="{{ url_for('portal') }}">Open my portal →</a>{% else %}<p>Awaiting final portal approval.</p>{% endif %}
   {% else %}
-    {% if payment %}<p>{{ payment[1] }}{% if g.student.country == 'Cameroon' %}. This is part of your first installment.{% endif %}</p>{{ external(payment[0],payment[1],'red') }}
+    {% if payment %}<p>{{ payment[1] }}</p>{{ external(payment[0],payment[1],'red') }}
     {% else %}<p>Contact support to arrange the enrollment fee for your country.</p>{{ external(support_url,'Arrange enrollment payment','outline') }}{% endif %}
     <p class="muted">After payment, submit your Flutterwave transaction reference. Clicking the payment link does not confirm payment.</p>
     <form action="{{ url_for('payment',enrollment_id=e.id) }}" method="post">{{ token() }}

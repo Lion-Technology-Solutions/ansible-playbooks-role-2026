@@ -74,6 +74,32 @@ class Course(db.Model):
     registration_url = db.Column(db.Text, default='', nullable=False)
     resources_url = db.Column(db.Text, default='', nullable=False)
     profile = db.relationship('ProgramProfile', uselist=False)
+    publication = db.relationship('CoursePublication', uselist=False)
+
+
+class CoursePublication(db.Model):
+    __tablename__ = 'portal_course_publications'
+    course_id = db.Column(db.Integer, db.ForeignKey('portal_courses.id'), primary_key=True)
+    published = db.Column(db.Boolean, default=False, nullable=False)
+    published_at = db.Column(db.DateTime(timezone=True))
+    payment_links = db.Column(db.JSON, default=dict, nullable=False)
+
+
+class PublicUpdate(db.Model):
+    __tablename__ = 'portal_public_updates'
+    id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(60), unique=True, nullable=False)
+    kind = db.Column(db.String(20), nullable=False)
+    title = db.Column(db.String(150), nullable=False)
+    summary = db.Column(db.String(500), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    starts_at = db.Column(db.DateTime(timezone=True))
+    ends_at = db.Column(db.DateTime(timezone=True))
+    location = db.Column(db.String(250), default='', nullable=False)
+    registration_url = db.Column(db.Text, default='', nullable=False)
+    published = db.Column(db.Boolean, default=False, nullable=False)
+    publish_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
+    updated_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
 
 
 class ProgramProfile(db.Model):
@@ -221,6 +247,10 @@ def seed(connection):
                     'Nigeria': '₦19,900 per month for 3 months. Enrollment fee: ₦2,500.',
                     'Ghana': 'Approximately GH₵198 per month · GH₵594 total over 3 months. Start with GH₵20 toward your first installment. Estimates may vary with exchange rates.',
                 } if is_analytics else {}))
+        publication = CoursePublication.__table__
+        if not connection.execute(select(publication.c.course_id).where(publication.c.course_id == course['id'])).first():
+            connection.execute(publication.insert().values(course_id=course['id'], published=True,
+                published_at=now(), payment_links={country: value[0] for country, value in PAYMENTS.items()}))
     identities = StudentIdentity.__table__
     # The caller holds the schema advisory lock, so parallel cold starts cannot
     # assign two numbers to an existing account. Issued numbers are never reused.
@@ -260,6 +290,29 @@ def utc_field(name, optional=False):
 
 def whatsapp(message):
     return 'https://wa.me/' + SUPPORT + '?' + urlencode({'text': message})
+
+
+def content_slug(value):
+    slug = re.sub(r'[^a-z0-9]+', '-', value.lower()).strip('-')
+    if not slug or len(slug) > 60:
+        raise ValueError('Use a short URL label with letters, numbers and hyphens (up to 60 characters).')
+    return slug
+
+
+def published_courses():
+    return select(Course).join(CoursePublication).where(CoursePublication.published.is_(True)).order_by(Course.id)
+
+
+def public_updates():
+    return select(PublicUpdate).where(PublicUpdate.published.is_(True), PublicUpdate.publish_at <= now())
+
+
+def course_payment(course, country):
+    link = course.publication.payment_links.get(country) or course.publication.payment_links.get('Other')
+    if not link:
+        return None
+    label = PAYMENTS[country][1] if course.slug in {c[0] for c in COURSES} and country in PAYMENTS else 'Pay enrollment fee'
+    return link, label
 
 
 def academy_today():
@@ -361,7 +414,7 @@ def create_app(config=None):
         account_request_url = whatsapp(f'LionTech student account creation request\nStudent number: {g.student.student_number}\nName: {g.student.name}\nStudent type: {g.student.kind}\nPlease review my account in the administrator dashboard.') if g.student else ''
         return dict(csrf=session['csrf'], support_url=whatsapp('Hello LionTech Academy, I need help with my student portal.'),
                     completion_url=whatsapp('Project completed'), account_request_url=account_request_url,
-                    countries=COUNTRIES, payments=PAYMENTS, utcnow=now(), aware=aware)
+                    countries=COUNTRIES, payments=PAYMENTS, course_payment=course_payment, utcnow=now(), aware=aware)
 
     def student_required(approved=False):
         def decorate(fn):
@@ -399,9 +452,41 @@ def create_app(config=None):
 
     @app.get('/')
     def home():
-        courses = db.session.scalars(select(Course).order_by(Course.id)).all()
+        courses = db.session.scalars(published_courses()).all()
         cohorts = upcoming_cohorts()
-        return render_template('home.html', courses=courses, cohorts=cohorts)
+        events = db.session.scalars(public_updates().where(PublicUpdate.kind == 'event',
+            db.func.coalesce(PublicUpdate.ends_at, PublicUpdate.starts_at) >= now()).order_by(PublicUpdate.starts_at).limit(3)).all()
+        announcements = db.session.scalars(public_updates().where(PublicUpdate.kind == 'announcement').order_by(PublicUpdate.publish_at.desc()).limit(3)).all()
+        return render_template('home.html', courses=courses, cohorts=cohorts, events=events, announcements=announcements)
+
+    @app.get('/courses/<slug>')
+    def course_page(slug):
+        course = db.session.scalar(published_courses().where(Course.slug == slug))
+        if not course:
+            abort(404)
+        return render_template('course_page.html', course=course, cohorts=upcoming_cohorts(), preview=False)
+
+    @app.get('/updates')
+    def updates():
+        items = db.session.scalars(public_updates().order_by(PublicUpdate.publish_at.desc(), PublicUpdate.id.desc())).all()
+        return render_template('updates.html', items=items)
+
+    @app.get('/updates/<slug>')
+    def update_page(slug):
+        item = db.session.scalar(public_updates().where(PublicUpdate.slug == slug))
+        if not item:
+            abort(404)
+        return render_template('update_page.html', item=item, preview=False)
+
+    @app.get('/admin/courses/<int:course_id>/preview')
+    @admin_required
+    def course_preview(course_id):
+        return render_template('course_page.html', course=db.get_or_404(Course, course_id), cohorts=upcoming_cohorts(), preview=True)
+
+    @app.get('/admin/updates/<int:update_id>/preview')
+    @admin_required
+    def update_preview(update_id):
+        return render_template('update_page.html', item=db.get_or_404(PublicUpdate, update_id), preview=True)
 
     @app.route('/register', methods=['GET', 'POST'])
     def register():
@@ -505,6 +590,8 @@ def create_app(config=None):
         if request.method == 'POST':
             try:
                 course = db.get_or_404(Course, int(field('course_id', 20)))
+                if not course.publication.published:
+                    raise ValueError('This course is not currently accepting new enrollments.')
                 cohort_id = request.form.get('cohort_id', '')
                 cohort = None
                 if g.student.kind == 'new':
@@ -522,9 +609,9 @@ def create_app(config=None):
                 flash(str(exc) if isinstance(exc, ValueError) else 'You have already requested this course.')
             return redirect(url_for('enrollments'))
         requested = db.session.scalars(select(Enrollment).where(Enrollment.student_id == g.student.id).order_by(Enrollment.id)).all()
-        courses = db.session.scalars(select(Course).order_by(Course.id)).all()
+        courses = db.session.scalars(published_courses()).all()
         return render_template('enrollments.html', requested=requested, courses=courses, cohorts=cohorts,
-            requested_ids={e.course_id for e in requested}, payment=PAYMENTS.get(g.student.country))
+            requested_ids={e.course_id for e in requested})
 
     @app.post('/enrollment/<int:enrollment_id>/payment')
     @student_required()
@@ -638,7 +725,45 @@ def create_app(config=None):
         if request.method == 'POST':
             try:
                 action = field('action', 30)
-                if action in ('verify_payment', 'approve', 'reject'):
+                if action in ('create_course', 'edit_course'):
+                    name, description, skills = field('name'), field('description', 3000), field('skills', 500)
+                    state = field('publication_state', 20)
+                    if state not in ('draft', 'published'):
+                        raise ValueError('Choose Save draft or Publish course.')
+                    if action == 'create_course':
+                        course = Course(slug=content_slug(field('slug', 60, False) or name), name=name,
+                                        description=description, skills=skills)
+                        course.profile = ProgramProfile(duration=field('duration',150,False),
+                            schedule=field('schedule',500,False), curriculum=field('curriculum',10000,False) or '\n'.join(skills.split(' · ')), tuition={})
+                        course.publication = CoursePublication(published=False, payment_links={})
+                        db.session.add(course)
+                    else:
+                        course = db.get_or_404(Course, int(field('course_id',20)))
+                        course.name, course.description, course.skills = name, description, skills
+                    course.publication.published = state == 'published'
+                    if state == 'published':
+                        course.publication.published_at = now()
+                elif action in ('create_update', 'edit_update'):
+                    kind = field('kind',20)
+                    state = field('publication_state',20)
+                    if kind not in ('event', 'announcement') or state not in ('draft', 'published'):
+                        raise ValueError('Choose a valid content type and publication state.')
+                    title, summary, body = field('title',150), field('summary',500), field('body',10000)
+                    start = utc_field('starts_at',True) if kind == 'event' else None
+                    end = utc_field('ends_at',True) if kind == 'event' else None
+                    if kind == 'event' and (not start or (end and end <= start)):
+                        raise ValueError('Events need a start time, and the end must be after the start.')
+                    link = valid_url(field('registration_url',3000,False),True)
+                    if action == 'create_update':
+                        item = PublicUpdate(slug=content_slug(field('slug',60,False) or title))
+                        db.session.add(item)
+                    else:
+                        item = db.get_or_404(PublicUpdate,int(field('update_id',20)))
+                    item.kind, item.title, item.summary, item.body = kind, title, summary, body
+                    item.starts_at, item.ends_at = start, end
+                    item.location, item.registration_url = field('location',250,False), link
+                    item.published, item.publish_at, item.updated_at = state == 'published', utc_field('publish_at',True) or now(), now()
+                elif action in ('verify_payment', 'approve', 'reject'):
                     enrollment = db.get_or_404(Enrollment, int(field('enrollment_id', 20)))
                     if action == 'verify_payment':
                         if enrollment.payment_status != 'submitted' or not enrollment.payment_reference:
@@ -680,6 +805,9 @@ def create_app(config=None):
                     course.profile.curriculum = field('curriculum', 10000, False)
                     course.profile.tuition = {country: field('tuition_' + str(index), 1500, False)
                                              for index, country in enumerate(COUNTRIES)}
+                    if any('payment_link_' + str(i) in request.form for i in range(len(COUNTRIES))):
+                        course.publication.payment_links = {country: valid_url(field('payment_link_' + str(i),3000,False),True)
+                                                           for i,country in enumerate(COUNTRIES)}
                 elif action == 'class':
                     course = db.get_or_404(Course, int(field('course_id', 20)))
                     db.session.add(ClassSession(course_id=course.id, title=field('title', 150), starts_at=utc_field('starts_at'),
@@ -721,6 +849,7 @@ def create_app(config=None):
                 flash(str(exc) if isinstance(exc, ValueError) else 'That record already exists. Check the details.')
             return redirect(url_for('admin'))
         return render_template('admin.html', next_dates=next_start_dates(), students=db.session.scalars(select(Student).order_by(Student.created_at.desc())).all(),
+            public_content=db.session.scalars(select(PublicUpdate).order_by(PublicUpdate.updated_at.desc())).all(),
             enrollments=db.session.scalars(select(Enrollment).order_by(Enrollment.created_at.desc())).all(),
             courses=db.session.scalars(select(Course).order_by(Course.id)).all(),
             cohorts=db.session.scalars(select(Cohort).order_by(Cohort.start_date)).all(),
