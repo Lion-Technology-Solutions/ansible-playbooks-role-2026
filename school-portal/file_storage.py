@@ -52,7 +52,7 @@ def validate_image(data, mime):
             if image.width*image.height>20_000_000 or Image.MIME.get(image.format)!=mime:
                 raise ValueError('The image format or dimensions are not supported.')
             image.verify()
-    except (UnidentifiedImageError,OSError,Image.DecompressionBombError) as exc:
+    except (UnidentifiedImageError,OSError,SyntaxError,Image.DecompressionBombError) as exc:
         raise ValueError('Upload a valid image file (up to 20 million pixels).') from exc
 
 

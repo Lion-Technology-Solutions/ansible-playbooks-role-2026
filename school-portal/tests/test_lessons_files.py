@@ -192,3 +192,16 @@ def test_file_library_rename_and_media_embeds(app):
     manager.post(f'/admin/assets/{audio}/manage',data={'csrf':token,'action':'rename','title':'Audio lecture 1'})
     assert b'Audio lecture 1' in manager.get('/admin/library').data
     assert student.get('/admin/library').status_code==302
+
+
+def test_corrupt_png_checksum_returns_validation_error(app):
+    import base64
+    manager,student,course,cohort=setup(app)
+    broken=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=')
+    token=csrf(manager,'/admin')
+    r=manager.post('/admin/assets/start',data={'csrf':token,'filename':'broken.png','size':len(broken),'purpose':'branding'})
+    aid=r.json['id']
+    manager.post(f'/admin/assets/{aid}/chunks/0',data=broken,headers={'X-CSRF-Token':token})
+    r=manager.post(f'/admin/assets/{aid}/finish',headers={'X-CSRF-Token':token})
+    assert r.status_code==400 and 'valid image' in r.json['error']
+    with app.app_context():assert not db.session.get(Asset,aid).ready
