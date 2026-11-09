@@ -38,6 +38,7 @@ def configure(app,manager,provider,values=None,action='save',**extra):
 
 
 def http_ok(url,method='GET',payload=None,headers=None,form=False):
+    if 'api.openai.com/v1/models/' in url:return {'id':url.rsplit('/',1)[-1]}
     if 'api.stripe.com' in url:return {'id':'acct_unit','charges_enabled':True}
     if url=='https://zoom.us/oauth/token':return {'access_token':'unit_zoom_access'}
     if 'api.zoom.us' in url:return {'id':'unit_host'}

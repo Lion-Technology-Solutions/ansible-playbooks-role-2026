@@ -7,6 +7,9 @@ def provider(name,category,glyph,description,fields,url,guide,capability):
     return dict(name=name,category=category,glyph=glyph,description=description,fields=fields,url=url,guide=guide,capability=capability)
 
 CATALOG={
+ 'openai':provider('ChatGPT · OpenAI','ai','✦','AI student support and reviewed admin updates.',[
+  field('OPENAI_API_KEY','OpenAI project API key'),field('OPENAI_MODEL','Responses API model',False,True,'Recommended: gpt-5.4-mini. Use a model available to your OpenAI project.')],
+  'https://platform.openai.com/api-keys','Create a restricted project API key with Responses and model-read access. Configure project billing and spending limits in OpenAI. Save and test here, then open AI Assistant. Your ChatGPT sign-in does not provide an API key.','Student inquiries; editable program, curriculum, lesson, announcement and live-class drafts. Admin review is required to apply changes'),
  'stripe':provider('Stripe','payments','S','Card payments linked to enrollment invoices.',[
   field('STRIPE_SECRET_KEY','Secret API key'),field('STRIPE_WEBHOOK_SECRET','Webhook signing secret')],
   'https://dashboard.stripe.com/apikeys','Use a Stripe sandbox first. Register the webhook shown below for checkout.session.completed and checkout.session.async_payment_succeeded, using snapshot events.','Hosted checkout and verified payment activation'),
@@ -41,5 +44,5 @@ CATALOG={
   field('LINKEDIN_CLIENT_ID','OAuth client ID',False),field('LINKEDIN_CLIENT_SECRET','OAuth client secret'),field('LINKEDIN_ACCESS_TOKEN','Authorized access token',True,False)],
   'https://www.linkedin.com/developers/apps','Enable the appropriate LinkedIn product and obtain user consent. An optional token with openid/profile can be tested against userinfo.','Authorized profile validation; professional sign-in and sharing not enabled'),
 }
-CATEGORIES={'all':'All','payments':'Payments','teaching':'Teaching','communication':'Communication','microsoft':'Microsoft','social':'Social'}
+CATEGORIES={'all':'All','payments':'Payments','teaching':'Teaching','communication':'Communication','microsoft':'Microsoft','social':'Social','ai':'AI Assistant'}
 ENV_PROVIDER={item['key']:slug for slug,entry in CATALOG.items() for item in entry['fields']}

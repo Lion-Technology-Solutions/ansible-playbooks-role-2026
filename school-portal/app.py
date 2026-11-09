@@ -70,6 +70,28 @@ class StudentIdentity(db.Model):
     student = db.relationship(Student, back_populates='identity')
 
 
+class AssistantDraft(db.Model):
+    __tablename__='portal_assistant_drafts'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    owner=db.Column(db.String(64),nullable=False)
+    action=db.Column(db.String(30),nullable=False)
+    target=db.Column(db.Integer,nullable=False,default=0)
+    payload=db.Column(db.JSON,nullable=False)
+    fingerprint=db.Column(db.String(64),nullable=False)
+    status=db.Column(db.String(20),nullable=False,default='pending')
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+
+
+class AssistantUsage(db.Model):
+    __tablename__='portal_assistant_usage'
+    id=db.Column(db.Integer,primary_key=True)
+    principal=db.Column(db.String(64),nullable=False,index=True)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now,index=True)
+    status=db.Column(db.String(20),nullable=False,default='requested')
+    input_tokens=db.Column(db.Integer,nullable=False,default=0)
+    output_tokens=db.Column(db.Integer,nullable=False,default=0)
+
+
 class IntegrationDeliveryControl(db.Model):
     __tablename__='portal_integration_delivery_control'
     id=db.Column(db.Integer,primary_key=True)
@@ -747,7 +769,7 @@ def create_app(config=None):
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts'))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review'))
 
     def student_required():
         def decorate(fn):
@@ -1449,6 +1471,7 @@ def create_app(config=None):
         if request.method == 'POST':
             try:
                 action = field('action', 30)
+                app.extensions['assistant']['confirm_submission']('admin')
                 if action=='course_price':
                     course=db.get_or_404(Course,int(field('course_id',20)));country=field('country',80);currency=field('currency',3)
                     count=int(field('installments',2))
@@ -1578,8 +1601,9 @@ def create_app(config=None):
                     course.profile.duration = field('duration', 150, False)
                     course.profile.schedule = field('schedule', 500, False)
                     course.profile.curriculum = field('curriculum', 10000, False)
-                    course.profile.tuition = {country: field('tuition_' + str(index), 1500, False)
-                                             for index, country in enumerate(LEGACY_COUNTRIES)}
+                    if not request.form.get('ai_draft_id'):
+                        course.profile.tuition = {country: field('tuition_' + str(index), 1500, False)
+                                                 for index, country in enumerate(LEGACY_COUNTRIES)}
                     if any('payment_link_' + str(i) in request.form for i in range(len(LEGACY_COUNTRIES))):
                         course.publication.payment_links = {country: valid_url(field('payment_link_' + str(i),3000,False),True)
                                                            for i,country in enumerate(LEGACY_COUNTRIES)}
@@ -1662,6 +1686,8 @@ def create_app(config=None):
     app.extensions['integrations']=install_integrations(app,db,globals(),dict(admin_required=admin_required,student_required=student_required))
     from global_portal import install
     app.extensions['global_experience']=install(app,db,globals(),dict(student_required=student_required,admin_required=admin_required,notify=notify,confirm_enrollment=confirm_enrollment,offer_for=offer_for))
+    from portal_assistant import install as install_assistant
+    app.extensions['assistant']=install_assistant(app,db,globals(),dict(admin_required=admin_required,student_required=student_required))
     return app
 
 

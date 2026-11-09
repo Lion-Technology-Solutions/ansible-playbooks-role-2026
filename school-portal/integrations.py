@@ -85,6 +85,12 @@ def install(app,db,m,h):
 
     def check(provider,values):
         bearer=lambda token:{'Authorization':'Bearer '+token}
+        if provider=='openai':
+            model=values['OPENAI_MODEL']
+            if not re.fullmatch(r'[a-zA-Z0-9._-]{1,100}',model):raise ValueError('Use a valid Responses API model identifier.')
+            result=transport('https://api.openai.com/v1/models/'+quote(model,safe=''),headers=bearer(values['OPENAI_API_KEY']))
+            if result.get('id')!=model:raise ValueError('The selected model could not be verified.')
+            return 'connected','API key and model access verified. Responses generation also requires permission, available quota and billing. Open AI Assistant to try it.'
         if provider=='stripe':
             result=transport('https://api.stripe.com/v1/account',headers=bearer(values['STRIPE_SECRET_KEY']))
             if not str(result.get('id','')).startswith('acct_'):raise ValueError('Stripe did not verify the merchant account.')
@@ -174,6 +180,7 @@ def install(app,db,m,h):
                         if request.form.get('clear_'+key)=='yes':values[key]=''
                         elif value:values[key]=value
                     if any(not values.get(item['key']) for item in entry['fields'] if item['required']):raise ValueError('Complete every required provider field. Blank saved fields keep their existing value.')
+                    if provider=='openai' and not re.fullmatch(r'[a-zA-Z0-9._-]{1,100}',values['OPENAI_MODEL']):raise ValueError('Use a valid Responses API model identifier.')
                     if provider=='email' and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',values['SENDGRID_FROM_EMAIL']):raise ValueError('Enter the verified sender email address.')
                     if provider=='microsoft' and not re.fullmatch(r'(common|organizations|consumers|[a-fA-F0-9-]{36})',values['MICROSOFT_TENANT']):raise ValueError('Use common, organizations, consumers or a tenant GUID.')
                     if provider=='whatsapp' and not re.fullmatch(r'whatsapp:\+\d{7,15}',values['TWILIO_WHATSAPP_FROM']):raise ValueError('Use whatsapp:+ followed by the full international sender number.')
@@ -413,4 +420,4 @@ def install(app,db,m,h):
         control=db.session.get(Control,1) or Control(id=1)
         control.worker_checked_at=now();control.publish_status='worker_confirmed';db.session.add(control);db.session.commit()
 
-    return dict(config=config,ready=ready,seal=seal,unseal=unseal,sync_calendar=sync_calendar,generation=generation,dispatch=dispatch,delivery_batch=delivery_batch,process_delivery=process_delivery,worker_probe=worker_probe)
+    return dict(reauthenticate=reauthenticate,config=config,ready=ready,seal=seal,unseal=unseal,sync_calendar=sync_calendar,generation=generation,dispatch=dispatch,delivery_batch=delivery_batch,process_delivery=process_delivery,worker_probe=worker_probe)

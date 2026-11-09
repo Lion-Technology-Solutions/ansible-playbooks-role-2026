@@ -342,6 +342,7 @@ def install(app,db,m,h):
     @admin_required
     def schedule_save():
         try:
+            app.extensions['assistant']['confirm_submission']('schedule_save')
             cid=int(field('course_id',20));db.get_or_404(M('Course'),cid)
             cohort_id=int(request.form['cohort_id']) if request.form.get('cohort_id') else None
             if cohort_id and db.get_or_404(Cohort,cohort_id).course_id!=cid:raise ValueError('Choose a cohort belonging to this program.')
