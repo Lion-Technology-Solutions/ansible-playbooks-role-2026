@@ -8,3 +8,7 @@ Pillow==12.2.0
 
 Babel==2.18.0
 pycountry==24.6.1
+
+cryptography==50.0.2
+
+vercel-queue==0.10.0

@@ -15,7 +15,7 @@ from werkzeug.utils import secure_filename
 from localization import COUNTRIES, COUNTRY_META, CURRENCIES, TIMEZONES, residence, formatted, converted, fetch_rates
 from experience import money_value
 from file_storage import validate_image
-from providers import ORIGIN, stripe_request, signed_stripe_event, zoom_request, send_class_email
+from providers import ORIGIN, setting, stripe_request, signed_stripe_event, zoom_request, send_class_email
 
 
 def install(app,db,m,h):
@@ -30,7 +30,8 @@ def install(app,db,m,h):
 
     def provider_ready(kind):
         keys={'card':('STRIPE_SECRET_KEY','STRIPE_WEBHOOK_SECRET'),'zoom':('ZOOM_ACCOUNT_ID','ZOOM_CLIENT_ID','ZOOM_CLIENT_SECRET','ZOOM_HOST_USER'),'email':('SENDGRID_API_KEY','SENDGRID_FROM_EMAIL')}
-        return all(os.environ.get(key) for key in keys[kind])
+        provider={'card':'stripe','zoom':'zoom','email':'email'}[kind]
+        return app.extensions['integrations']['ready'](provider) if request.endpoint!='stripe_webhook' else all(setting(key) for key in keys[kind])
 
     def rates():
         if hasattr(g,'usd_rates'):return g.usd_rates
@@ -69,19 +70,20 @@ def install(app,db,m,h):
                 except (ValueError,InvalidOperation):values.update(available=False,rate=None,amount=None)
         return values
 
-    merchant_support={'currencies':None,'checked_at':None}
+    merchant_support={'currencies':None,'checked_at':None,'revision':None}
 
     def presentment(invoice,country):
         result={'currency':'USD','amount':str(invoice.amount_usd),'minor':int(invoice.amount_usd*100),'formatted':formatted(invoice.amount_usd,'USD'),'rate':'1','as_of':None}
         value=local_money(invoice.amount_usd,country)
         if not provider_ready('card') or value['currency']=='USD' or not value['available'] or value['stale']:return result
         try:
-            if merchant_support['checked_at'] is None or merchant_support['checked_at']<now()-timedelta(hours=24):
+            config_row=db.session.get(m['IntegrationSetting'],'stripe');config_revision=config_row.revision if config_row else 0
+            if merchant_support['revision']!=config_revision or merchant_support['checked_at'] is None or merchant_support['checked_at']<now()-timedelta(hours=24):
                 provider=app.config.get('STRIPE_REQUEST',stripe_request)
                 account=provider('account');merchant_country=account.get('country','')
                 if not isinstance(merchant_country,str) or len(merchant_country)!=2 or not merchant_country.isalpha():return result
                 spec=provider('country_specs/'+merchant_country.upper())
-                merchant_support.update(currencies={str(code).upper() for code in spec.get('supported_payment_currencies',[])},checked_at=now())
+                merchant_support.update(revision=config_revision,currencies={str(code).upper() for code in spec.get('supported_payment_currencies',[])},checked_at=now())
             currency=value['currency'];precision=get_currency_precision(currency)
             # Use USD when the gateway cannot present this currency or its precision.
             if currency not in merchant_support['currencies'] or precision not in (0,2):return result
@@ -226,7 +228,7 @@ def install(app,db,m,h):
     @app.post('/webhooks/stripe')
     def stripe_webhook():
         if not provider_ready('card'):abort(503)
-        try:event=signed_stripe_event(request.get_data(),request.headers.get('Stripe-Signature',''),os.environ['STRIPE_WEBHOOK_SECRET'])
+        try:event=signed_stripe_event(request.get_data(),request.headers.get('Stripe-Signature',''),setting('STRIPE_WEBHOOK_SECRET'))
         except ValueError:abort(400)
         if event.get('type') not in ('checkout.session.completed','checkout.session.async_payment_succeeded'):return '',200
         obj=event.get('data',{}).get('object',{});sid=obj.get('id','')
@@ -291,7 +293,7 @@ def install(app,db,m,h):
         detail=class_detail(lesson);revision=detail.revision if detail else 0
         def escape(value):return str(value).replace('\\','\\\\').replace('\n','\\n').replace(';','\\;').replace(',','\\,').replace('\r','')
         def stamp(value):return aware(value).astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-        lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//LionTech Academy//Student Portal//EN','CALSCALE:GREGORIAN','METHOD:REQUEST','BEGIN:VEVENT','UID:class-'+str(lesson.id)+'@liontechacademy.com','SEQUENCE:'+str(revision),'DTSTAMP:'+stamp(now()),'DTSTART:'+stamp(lesson.starts_at),'DTEND:'+stamp(aware(lesson.starts_at)+timedelta(minutes=detail.duration if detail else 120)),'SUMMARY:'+escape(lesson.title),'DESCRIPTION:'+escape(lesson.course.name+' — join securely through your student portal. Student number: '+student.student_number),'URL:'+ORIGIN+url_for('live_classes'),'ORGANIZER:mailto:'+os.environ.get('SENDGRID_FROM_EMAIL','liontechacademy@gmail.com'),'ATTENDEE;RSVP=TRUE:mailto:'+student.email,'STATUS:CONFIRMED','END:VEVENT','END:VCALENDAR']
+        lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//LionTech Academy//Student Portal//EN','CALSCALE:GREGORIAN','METHOD:REQUEST','BEGIN:VEVENT','UID:class-'+str(lesson.id)+'@liontechacademy.com','SEQUENCE:'+str(revision),'DTSTAMP:'+stamp(now()),'DTSTART:'+stamp(lesson.starts_at),'DTEND:'+stamp(aware(lesson.starts_at)+timedelta(minutes=detail.duration if detail else 120)),'SUMMARY:'+escape(lesson.title),'DESCRIPTION:'+escape(lesson.course.name+' — join securely through your student portal. Student number: '+student.student_number),'URL:'+ORIGIN+url_for('live_classes'),'ORGANIZER:mailto:'+(setting('SENDGRID_FROM_EMAIL') or 'liontechacademy@gmail.com'),'ATTENDEE;RSVP=TRUE:mailto:'+student.email,'STATUS:CONFIRMED','END:VEVENT','END:VCALENDAR']
         # RFC 5545 lines fold at 75 UTF-8 octets, without splitting a code point.
         folded=[]
         for line in lines:
@@ -364,7 +366,7 @@ def install(app,db,m,h):
                 if not provider_ready('zoom'):raise ValueError('Connect Zoom account credentials before creating Zoom meetings. You can still save a manual Zoom link.')
                 if not published:raise ValueError('Save drafts with manual links; create the Zoom meeting when publishing.')
                 payload={'topic':title,'type':2,'start_time':zoned.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),'duration':duration,'timezone':zone,'settings':{'waiting_room':True,'join_before_host':False,'meeting_authentication':False}}
-                path='meetings/'+quote(detail.meeting_id,safe='') if detail.meeting_id else 'users/'+quote(os.environ['ZOOM_HOST_USER'],safe='')+'/meetings'
+                path='meetings/'+quote(detail.meeting_id,safe='') if detail.meeting_id else 'users/'+quote(setting('ZOOM_HOST_USER'),safe='')+'/meetings'
                 result=app.config.get('ZOOM_REQUEST',zoom_request)('PATCH' if detail.meeting_id else 'POST',path,payload)
                 if not detail.meeting_id:
                     link=m['valid_url'](result.get('join_url',''));detail.meeting_id=str(result['id'])
@@ -376,7 +378,7 @@ def install(app,db,m,h):
             detail.class_id,detail.cohort_id,detail.duration,detail.join_minutes=lesson.id,cohort_id,duration,minutes
             detail.timezone,detail.instructor,detail.published=zone,instructor,published
             detail.revision=(detail.revision or 0)+1;db.session.add(detail);db.session.flush()
-            queue_class(lesson,detail);db.session.commit();flash('Class saved. Published schedule updates are in the portal; email/calendar deliveries are queued for eligible students.')
+            queue_class(lesson,detail);db.session.commit();app.extensions['integrations']['dispatch']();flash('Class saved. Published schedule updates are in the portal; email/calendar deliveries are queued for eligible students.')
         except (ValueError,KeyError,IntegrityError) as error:
             db.session.rollback();flash(str(error) if isinstance(error,ValueError) else 'Could not save this schedule. Check the class and cohort details.')
         except Exception:
@@ -405,4 +407,4 @@ def install(app,db,m,h):
     def global_context():
         return dict(card_payment_records=db.session.scalars(select(Checkout).order_by(Checkout.created_at.desc())).all() if session.get('admin') else [],global_invoices=db.session.scalars(select(Invoice).order_by(Invoice.created_at.desc())).all() if session.get('admin') else [],manual_fee_records=db.session.scalars(select(Manual).order_by(Manual.created_at.desc())).all() if session.get('admin') else [],global_prices={item.course_id:item for item in db.session.scalars(select(GlobalTuition))} if session.get('admin') else {})
 
-    return dict(local_money=local_money,formatted_money=formatted,residence=residence,global_fee_usd=Decimal('5.00'),class_local_time=lambda lesson:aware(lesson.starts_at).astimezone(ZoneInfo(class_detail(lesson).timezone if class_detail(lesson) else 'UTC')).strftime('%Y-%m-%dT%H:%M'),class_detail=class_detail,class_visible=class_visible,join_open=join_open)
+    return dict(local_money=local_money,formatted_money=formatted,residence=residence,global_fee_usd=Decimal('5.00'),calendar_text=calendar_text,class_local_time=lambda lesson:aware(lesson.starts_at).astimezone(ZoneInfo(class_detail(lesson).timezone if class_detail(lesson) else 'UTC')).strftime('%Y-%m-%dT%H:%M'),class_detail=class_detail,class_visible=class_visible,join_open=join_open)

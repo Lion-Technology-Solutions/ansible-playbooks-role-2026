@@ -70,6 +70,73 @@ class StudentIdentity(db.Model):
     student = db.relationship(Student, back_populates='identity')
 
 
+class IntegrationDeliveryControl(db.Model):
+    __tablename__='portal_integration_delivery_control'
+    id=db.Column(db.Integer,primary_key=True)
+    automatic=db.Column(db.Boolean,default=False,nullable=False)
+    worker_checked_at=db.Column(db.DateTime(timezone=True))
+    last_publish_at=db.Column(db.DateTime(timezone=True))
+    publish_status=db.Column(db.String(30),default='not_tested',nullable=False)
+
+
+class IntegrationSetting(db.Model):
+    __tablename__='portal_integration_settings'
+    provider=db.Column(db.String(30),primary_key=True)
+    ciphertext=db.Column(db.Text,nullable=False)
+    enabled=db.Column(db.Boolean,default=True,nullable=False)
+    status=db.Column(db.String(30),default='needs_test',nullable=False)
+    detail=db.Column(db.String(300),default='',nullable=False)
+    revision=db.Column(db.Integer,default=1,nullable=False)
+    checked_at=db.Column(db.DateTime(timezone=True))
+    updated_at=db.Column(db.DateTime(timezone=True),default=now,nullable=False)
+
+
+class IntegrationAudit(db.Model):
+    __tablename__='portal_integration_audit'
+    id=db.Column(db.Integer,primary_key=True)
+    provider=db.Column(db.String(30),nullable=False)
+    action=db.Column(db.String(40),nullable=False)
+    status=db.Column(db.String(30),nullable=False)
+    created_at=db.Column(db.DateTime(timezone=True),default=now,nullable=False)
+
+
+class StudentConnection(db.Model):
+    __tablename__='portal_student_connections'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    provider=db.Column(db.String(30),primary_key=True)
+    ciphertext=db.Column(db.Text,nullable=False)
+    status=db.Column(db.String(30),default='connected',nullable=False)
+    generation=db.Column(db.String(64),nullable=False)
+    updated_at=db.Column(db.DateTime(timezone=True),default=now,nullable=False)
+
+
+class CalendarOAuthState(db.Model):
+    __tablename__='portal_calendar_oauth_states'
+    digest=db.Column(db.String(64),primary_key=True)
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),nullable=False)
+    provider=db.Column(db.String(30),nullable=False)
+    ciphertext=db.Column(db.Text,nullable=False)
+    revision=db.Column(db.Integer,nullable=False)
+    expires_at=db.Column(db.DateTime(timezone=True),nullable=False)
+    consumed=db.Column(db.Boolean,default=False,nullable=False)
+
+
+class StudentIntegrationPreference(db.Model):
+    __tablename__='portal_student_integration_preferences'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    reminders=db.Column(db.Boolean,default=True,nullable=False)
+
+
+class CalendarEventLink(db.Model):
+    __tablename__='portal_calendar_event_links'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    provider=db.Column(db.String(30),primary_key=True)
+    class_id=db.Column(db.Integer,db.ForeignKey('portal_classes.id'),primary_key=True)
+    event_id=db.Column(db.String(500),nullable=False)
+    revision=db.Column(db.Integer,default=0,nullable=False)
+    generation=db.Column(db.String(64),nullable=False)
+
+
 class FxSnapshot(db.Model):
     __tablename__='portal_fx_snapshots'
     id=db.Column(db.Integer,primary_key=True)
@@ -660,7 +727,7 @@ def create_app(config=None):
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
         response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'self'"
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self' https://checkout.stripe.com https://accounts.google.com https://login.microsoftonline.com; frame-ancestors 'none'; base-uri 'self'"
         return response
 
     @app.context_processor
@@ -680,7 +747,7 @@ def create_app(config=None):
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin'))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts'))
 
     def student_required():
         def decorate(fn):
@@ -1591,6 +1658,8 @@ def create_app(config=None):
     def handled_error(error):
         return render_template('error.html', code=error.code, message=error.description), error.code
 
+    from integrations import install as install_integrations
+    app.extensions['integrations']=install_integrations(app,db,globals(),dict(admin_required=admin_required,student_required=student_required))
     from global_portal import install
     app.extensions['global_experience']=install(app,db,globals(),dict(student_required=student_required,admin_required=admin_required,notify=notify,confirm_enrollment=confirm_enrollment,offer_for=offer_for))
     return app
