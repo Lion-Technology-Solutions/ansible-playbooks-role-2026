@@ -4,3 +4,4 @@
 
 .editor{border-top:1px solid #dce3ef;padding:16px 0}.editor>summary{font-size:1.1rem;font-weight:750;cursor:pointer;padding:8px 0}.editor[open]>summary{margin-bottom:18px}.course-actions{display:grid;gap:14px;margin-top:18px}.course-enrollment{align-self:start}.update-card h3{overflow-wrap:anywhere}.public-article{max-width:900px;margin-inline:auto}.public-article .instructions{margin:28px 0}.event-meta{padding:16px 20px;background:#edf3ff;border-radius:12px}.public-article h1{overflow-wrap:anywhere}.course-date{overflow-wrap:anywhere}
 header nav{flex-wrap:wrap}
+.access-locked{background:#fff7df;border:1px solid #ecd893;border-radius:12px;padding:18px;margin-top:20px;color:#5e4a13}.access-locked p{margin-bottom:0}.course-access{margin-top:20px}.button:disabled{opacity:.5;cursor:not-allowed}.payment-box h4{margin-top:0}#announcements{scroll-margin-top:24px}

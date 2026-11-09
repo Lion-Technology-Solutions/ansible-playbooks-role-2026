@@ -28,24 +28,24 @@ The application refuses to start without required variables. It requires Postgre
 
 ## Enrollment and payment approval
 
-1. Students register at `/register`, choose new/existing status, country, name, email, phone and password. Both types receive a permanent student number such as `LT-2026-000123`. Existing database accounts are backfilled additively on first startup; numbers remain stable across redeployments.
+1. Students register at `/register`, choose new/existing status, country, name, email, phone and password. Both types receive a permanent student number such as `LT-2026-000123`, an automatically active account, and access to `/portal` immediately. Existing database accounts are backfilled additively on first startup; numbers remain stable across redeployments.
 2. At `/enrollments`, students choose from the published catalog. The initial catalog is DevOps, Cybersecurity, Cloud Computing and Data Analytics; administrators can create additional courses without a code change.
 3. Every program offers new batches every Saturday and Sunday. The homepage and student account show exactly the next two future weekend dates using `America/Toronto`. Today is excluded because no universal batch cutoff time has been supplied. New students must select one of those dates; the server rejects expired, unoffered, or cross-program dates. Existing students retain their current batch and skip selection. Intakes are generated idempotently under a PostgreSQL advisory lock.
 4. Program- and country-specific payment links appear after the enrollment request. New courses start with no checkout links and direct students to support until an administrator configures them. The existing courses retain their supplied Flutterwave links. Cameroon displays **2,000 FCFA toward the first installment**. Nigeria/Ghana use the supplied checkout links without inventing a fee. Other countries are directed to support to arrange payment.
-5. Students submit their transaction reference and optional payer/date details. Account access stays pending.
-6. At `/admin`, the administrator checks the transaction and correct fee in Flutterwave, selects **Confirm payment verified**, and then **Approve enrollment & portal**. Server-side rules enforce payment verification before approval. Reused transaction references are rejected.
+5. Students submit their transaction reference and optional payer/date details. The account remains active; course enrollment and class access stay pending until payment is verified and enrollment is confirmed.
+6. At `/admin`, the administrator checks the transaction and correct fee in the payment provider, then chooses **Verify payment & approve enrollment**. Alternatively, **Verify payment only** followed by **Approve enrollment** completes the same flow in two steps. The approval button is visible but disabled before verification; the server also rejects approval without verified payment. A submitted reference alone never unlocks course access. Reused references are rejected.
 
-Payment verification is manual. There is no payment webhook/API credential configured. Opening checkout or submitting a reference never marks an account paid automatically. An existing-student declaration does not bypass payment verification or approval. Email ownership is not automatically verified; public signup creates a pending account only.
+Payment verification is manual. There is no payment webhook/API credential configured. Opening checkout or submitting a reference never marks an account paid automatically. An existing-student declaration does not bypass payment verification or approval. Email and WhatsApp ownership are not automatically verified. Public signup creates an active account, never a paid enrollment. Existing account flags are backfilled to active without changing any payment or enrollment status.
 
 ## Program information and communication status
 
 The student account displays each selected program's duration, country-specific tuition, schedule, curriculum and next two starts. Administrators maintain these fields under **Tuition, schedules & curriculum**. The initial Data Analytics fees come from the supplied country flyers: Cameroon 10,000 FCFA/month and 30,000 total with 2,000 toward the first installment; Nigeria ₦19,900/month and ₦2,500 enrollment; Ghana approximately GH₵198/month and GH₵594 total with GH₵20 toward the first installment (exchange-rate dependent). Other program prices, durations and class times remain explicitly unconfirmed until the administrator publishes them. Existing descriptions supply the initial curriculum topics; they are editable.
 
-Account creation records are visible in the administrator dashboard immediately. An interim account-request WhatsApp link includes the student number and name and targets +1 437-575-6656. It requires the student to tap Send. It is **not** automatic message delivery.
+Each signup saves an `AccountRequest` in the same database transaction as the student account. Existing accounts receive one backfilled request each; repeat startups and duplicate signups do not create duplicate requests. The admin **Account notifications** section lists every saved request with a WhatsApp send link addressed to +1 437-575-6656. Messages include student number, name, contact details, country and student type, but no password. Students also have a support notification link. Both require opening WhatsApp and tapping Send. These are saved notifications, **not** automatic message delivery; the UI states that the automatic connection is pending.
 
 **Pending external setup:** The owner selected Twilio for WhatsApp notifications and OTP, and Twilio SendGrid for approval/payment-link emails. Neither service is connected to this Vercel project. No OTP generation/verification endpoint, automatic WhatsApp sender, or approval email delivery is implemented or claimed active in this version. There is no fake-code or email-sent fallback. Complete provider setup before implementing and enabling these flows. Use Twilio Verify's WhatsApp channel with send/check rate limits; use an approved WhatsApp notification template for administrator account requests. SendGrid needs a verified sender/domain. Configure credentials privately in Vercel, never in Git or chat.
 
-The next messaging change must distinguish account approval/payment invitation from paid enrollment access: an approval email containing a payment link should not silently bypass the existing payment verification gate. Confirm the intended stage when connecting email delivery.
+Any future automatic email or WhatsApp integration must preserve the active-account / paid-enrollment boundary. Account activation must never be treated as proof of payment or permission to access classes.
 
 ## Course, event and announcement publishing
 
@@ -64,19 +64,25 @@ Publishing uses additive `portal_course_publications` and `portal_public_updates
 
 ## Classes, resources and recordings
 
-- Approved students access `/portal` and see only their approved courses.
+- All signed-in students access `/portal`. They see selected programs, tuition, payment methods, curriculum, published class schedules and public announcements before payment. Only courses with both verified payment and confirmed enrollment unlock registration, joining, materials, recordings and coursework. Access to one course never grants access to another.
 - The supplied Data Analytics Zoom registration and Drive resources are installed as course links.
 - Administrators can schedule classes with a date/time in **UTC** and a Zoom registration link. Students also see their local class time.
-- Students register in the portal and complete any Zoom registration separately. The app does not call Zoom's API or claim that portal registration automatically registers someone in Zoom.
-- Admins publish Zoom recording links now or at a future UTC availability time. The link is shown only to approved students enrolled in that course.
-- Each publication creates in-portal notifications for enrolled students. Newly approved students receive existing recording notifications too. Future recordings/notifications stay hidden until their availability time.
+- Administrators can set separate class registration and direct meeting-joining URLs when scheduling a class or under **Class registration & joining links**. Students register in the portal and complete any Zoom registration separately. The app does not call Zoom's API or claim that portal registration automatically registers someone in Zoom.
+- Admins publish Zoom recording links now or at a future UTC availability time. The link is shown only to paid, confirmed students enrolled in that course.
+- Each publication creates in-portal notifications for enrolled students. Newly confirmed enrollments receive existing recording notifications too. Recording notifications are hidden again when course access is revoked. Future recordings/notifications stay hidden until their availability time.
 - The supplied latest recording is seeded privately through the environment variable. Updating the seed variable later does not replace an existing recording: publish a new recording through the admin dashboard instead.
 
 Automatic delivery is inside the portal. Email, push and WhatsApp Business delivery, and automatic Zoom import, are not configured. Admins publish recordings after class or schedule availability in advance.
 
+### Server-side access checks
+
+The portal never renders unpaid course registration, joining, resources or recording URLs. The routes `/course/<id>/register`, `/course/<id>/materials`, `/class/<id>/join`, `/class/<id>/register`, `/recording/<id>/watch`, assessment submission and attendance each enforce the student session and course-specific paid enrollment. Private recording availability times remain enforced. Revoking a course locks it immediately while preserving the active account, public information and schedules.
+
+New additive tables `portal_account_requests` and `portal_class_join_links` preserve existing data. The existing `Student.approved` column now represents automatic account activation and is not a class-access authorization check.
+
 ## Attendance and support
 
-At `/attendance`, approved students select a class that has started. The server stores one attendance record per student/class, and administrators can see the register. It then displays a WhatsApp report link for **+1 437-575-6656**. The student opens WhatsApp and taps **Send**; the app does not report WhatsApp delivery as successful or silently message anyone.
+At `/attendance`, students can record attendance only for a paid, confirmed course and a class that has started. The server stores one attendance record per student/class, and administrators can see the register. It then displays a WhatsApp report link for **+1 437-575-6656**. The student opens WhatsApp and taps **Send**; the app does not report WhatsApp delivery as successful or silently message anyone.
 
 All support and project-completed links use the same supplied WhatsApp number. Attendance is stored even if WhatsApp is unavailable. No automated WhatsApp Business API is configured.
 
@@ -100,7 +106,7 @@ pip install -r school-portal/requirements.txt pytest==8.4.2
 pytest school-portal/tests -q
 ```
 
-Tests explicitly use isolated SQLite databases and check country-specific payment routing, dates/new-vs-existing handling, approval gates, duplicate payment references, student isolation, CSRF, class registration, attendance uniqueness and WhatsApp payloads, scheduled recordings, notifications, submissions/results, password resets, revocation, stable and backfilled student numbers, Saturday/Sunday rollover (including Toronto midnight and year-end), editable country-specific program details, admin-only course/content publishing, private previews, duplicate URL labels, per-course checkout isolation, scheduled events, escaped announcements, and preserving enrolled access after unpublishing. Deployed verification checks the real PostgreSQL-backed health endpoint and the critical live user flows.
+Tests explicitly use isolated SQLite databases and check country-specific payment routing, dates/new-vs-existing handling, approval gates, duplicate payment references, student isolation, CSRF, class registration, attendance uniqueness and WhatsApp payloads, scheduled recordings, notifications, submissions/results, password resets, revocation, stable and backfilled student numbers, Saturday/Sunday rollover (including Toronto midnight and year-end), editable country-specific program details, admin-only course/content publishing, private previews, duplicate URL labels, per-course checkout isolation, scheduled events, escaped announcements, preserving enrolled access after unpublishing, automatic account activation, per-course payment gates, direct protected-route checks, combined and separate admin approval, recording-notice revocation, class joining links, and idempotent saved support notifications. Deployed verification checks the real PostgreSQL-backed health endpoint and the critical live user flows.
 
 ## Local development
 

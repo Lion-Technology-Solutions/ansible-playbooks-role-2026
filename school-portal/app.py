@@ -47,7 +47,7 @@ class Student(db.Model):
     country = db.Column(db.String(80), nullable=False)
     kind = db.Column(db.String(12), nullable=False)
     password_hash = db.Column(db.Text, nullable=False)
-    approved = db.Column(db.Boolean, default=False, nullable=False)
+    approved = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
     identity = db.relationship('StudentIdentity', back_populates='student', uselist=False)
 
@@ -62,6 +62,14 @@ class StudentIdentity(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     student_id = db.Column(db.String(36), db.ForeignKey('portal_students.id'), unique=True, nullable=False)
     student = db.relationship(Student, back_populates='identity')
+
+
+class AccountRequest(db.Model):
+    __tablename__ = 'portal_account_requests'
+    id = db.Column(db.Integer, primary_key=True)
+    student_id = db.Column(db.String(36), db.ForeignKey('portal_students.id'), unique=True, nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), default=now, nullable=False)
+    student = db.relationship(Student)
 
 
 class Course(db.Model):
@@ -148,6 +156,13 @@ class ClassSession(db.Model):
     starts_at = db.Column(db.DateTime(timezone=True), nullable=False)
     registration_url = db.Column(db.Text, default='', nullable=False)
     course = db.relationship(Course)
+    joining = db.relationship('ClassJoinLink', uselist=False)
+
+
+class ClassJoinLink(db.Model):
+    __tablename__ = 'portal_class_join_links'
+    class_id = db.Column(db.Integer, db.ForeignKey('portal_classes.id'), primary_key=True)
+    url = db.Column(db.Text, default='', nullable=False)
 
 
 class ClassRegistration(db.Model):
@@ -252,11 +267,16 @@ def seed(connection):
             connection.execute(publication.insert().values(course_id=course['id'], published=True,
                 published_at=now(), payment_links={country: value[0] for country, value in PAYMENTS.items()}))
     identities = StudentIdentity.__table__
+    requests = AccountRequest.__table__
+    # Account activation is independent of paid enrollment in any course.
+    connection.execute(Student.__table__.update().where(Student.approved.is_(False)).values(approved=True))
     # The caller holds the schema advisory lock, so parallel cold starts cannot
     # assign two numbers to an existing account. Issued numbers are never reused.
     for sid in connection.execute(select(Student.id).order_by(Student.created_at, Student.id)).scalars():
         if not connection.execute(select(identities.c.id).where(identities.c.student_id == sid)).first():
             connection.execute(identities.insert().values(student_id=sid))
+        if not connection.execute(select(requests.c.id).where(requests.c.student_id == sid)).first():
+            connection.execute(requests.insert().values(student_id=sid,created_at=now()))
     recording = os.environ.get('INITIAL_ANALYTICS_RECORDING_URL', '')
     if recording and not connection.execute(select(Recording.id).where(Recording.seed_key == 'initial-data-analytics')).first():
         connection.execute(Recording.__table__.insert().values(course_id=analytics, title='Latest Data Analytics class', url=recording,
@@ -290,6 +310,10 @@ def utc_field(name, optional=False):
 
 def whatsapp(message):
     return 'https://wa.me/' + SUPPORT + '?' + urlencode({'text': message})
+
+
+def account_whatsapp(student):
+    return whatsapp(f'LionTech account creation notification\nStudent number: {student.student_number}\nName: {student.name}\nEmail: {student.email}\nWhatsApp: {student.phone}\nCountry: {student.country}\nStudent type: {student.kind}\nAccount: Active (automatically approved)\nEnrollment: Requires payment confirmation\nReview: https://liontech-student-portal.vercel.app/admin#students')
 
 
 def content_slug(value):
@@ -411,20 +435,17 @@ def create_app(config=None):
     @app.context_processor
     def context():
         session.setdefault('csrf', secrets.token_hex(24))
-        account_request_url = whatsapp(f'LionTech student account creation request\nStudent number: {g.student.student_number}\nName: {g.student.name}\nStudent type: {g.student.kind}\nPlease review my account in the administrator dashboard.') if g.student else ''
+        account_request_url = account_whatsapp(g.student) if g.student else ''
         return dict(csrf=session['csrf'], support_url=whatsapp('Hello LionTech Academy, I need help with my student portal.'),
                     completion_url=whatsapp('Project completed'), account_request_url=account_request_url,
-                    countries=COUNTRIES, payments=PAYMENTS, course_payment=course_payment, utcnow=now(), aware=aware)
+                    countries=COUNTRIES, payments=PAYMENTS, course_payment=course_payment, account_whatsapp=account_whatsapp, utcnow=now(), aware=aware)
 
-    def student_required(approved=False):
+    def student_required():
         def decorate(fn):
             @wraps(fn)
             def wrapped(*args, **kwargs):
                 if not g.student:
                     return redirect(url_for('login'))
-                if approved and not g.student.approved:
-                    flash('Your portal is awaiting payment verification and administrator approval.')
-                    return redirect(url_for('enrollments'))
                 return fn(*args, **kwargs)
             return wrapped
         return decorate
@@ -444,6 +465,17 @@ def create_app(config=None):
     def notify(student_id, title, body='', available_at=None, recording_id=None):
         db.session.add(Notification(student_id=student_id, title=title, body=body,
             available_at=available_at or now(), recording_id=recording_id))
+
+    def confirm_enrollment(enrollment):
+        if enrollment.payment_status != 'verified':
+            raise ValueError('Verify the enrollment payment before approving access.')
+        if enrollment.status == 'approved':
+            return
+        enrollment.status, enrollment.approved_at = 'approved', now()
+        notify(enrollment.student_id, 'Your enrollment is approved', f'Payment confirmed. Welcome to {enrollment.course.name}. Your class access is now available.')
+        for recording in db.session.scalars(select(Recording).where(Recording.course_id == enrollment.course_id)):
+            if not db.session.scalar(select(Notification).where(Notification.student_id == enrollment.student_id, Notification.recording_id == recording.id)):
+                notify(enrollment.student_id, 'Class recording available', recording.title, recording.available_at, recording.id)
 
     @app.get('/health')
     def health():
@@ -499,18 +531,19 @@ def create_app(config=None):
                     raise ValueError('Enter a valid email, country, and student type.')
                 if not 10 <= len(password) <= 128 or password != request.form.get('confirm_password'):
                     raise ValueError('Use matching passwords with 10–128 characters.')
-                student = Student(name=name, email=email, phone=phone, country=country, kind=kind,
+                student = Student(name=name, email=email, phone=phone, country=country, kind=kind, approved=True,
                     password_hash=generate_password_hash(password, method='pbkdf2:sha256:600000'))
                 db.session.add(student)
                 db.session.flush()
                 db.session.add(StudentIdentity(student_id=student.id))
+                db.session.add(AccountRequest(student_id=student.id))
                 db.session.commit()
                 session.clear()
                 session['student_id'] = student.id
                 session['student_auth'] = hmac.new(app.secret_key.encode(), student.password_hash.encode(), 'sha256').hexdigest()
                 session.permanent = True
-                flash(f'Your account is created. Your student number is {student.student_number}. Choose a course to continue.')
-                return redirect(url_for('enrollments'))
+                flash(f'Your account is active. Your student number is {student.student_number}. Course access opens after payment confirmation.')
+                return redirect(url_for('portal'))
             except ValueError as exc:
                 flash(str(exc))
             except IntegrityError:
@@ -555,7 +588,7 @@ def create_app(config=None):
                 if db.session.get(LoginAttempt, key):
                     db.session.delete(db.session.get(LoginAttempt, key))
                     db.session.commit()
-                return redirect(url_for('portal' if student.approved else 'enrollments'))
+                return redirect(url_for('portal'))
             failed_login(key)
             flash('Invalid email or password.')
         return render_template('login.html', admin=False)
@@ -629,29 +662,77 @@ def create_app(config=None):
             enrollment.payment_note = note
             enrollment.payment_status = 'submitted'
             db.session.commit()
-            flash('Payment reference submitted. Your administrator will verify it before approving portal access.')
+            flash('Payment reference submitted. Your administrator will verify it before confirming enrollment and class access.')
         except (ValueError, IntegrityError) as exc:
             db.session.rollback()
             flash(str(exc) if isinstance(exc, ValueError) else 'That payment reference has already been submitted. Contact support.')
         return redirect(url_for('enrollments'))
 
     @app.get('/portal')
-    @student_required(approved=True)
+    @student_required()
     def portal():
-        enrollments = db.session.scalars(select(Enrollment).where(Enrollment.student_id == g.student.id,
+        enrollments = db.session.scalars(select(Enrollment).where(Enrollment.student_id == g.student.id).order_by(Enrollment.id)).all()
+        paid = db.session.scalars(select(Enrollment).where(Enrollment.student_id == g.student.id,
             Enrollment.status == 'approved', Enrollment.payment_status == 'verified')).all()
-        course_ids = [e.course_id for e in enrollments]
-        classes = db.session.scalars(select(ClassSession).where(ClassSession.course_id.in_(course_ids)).order_by(ClassSession.starts_at.desc())).all()
+        course_ids = [e.course_id for e in paid]
+        selected_ids = [e.course_id for e in enrollments]
+        classes = db.session.scalars(select(ClassSession).where(ClassSession.course_id.in_(selected_ids)).order_by(ClassSession.starts_at.desc())).all()
         recordings = db.session.scalars(select(Recording).where(Recording.course_id.in_(course_ids), Recording.available_at <= now()).order_by(Recording.available_at.desc())).all()
         assessments = db.session.scalars(select(Assessment).where(Assessment.course_id.in_(course_ids)).order_by(Assessment.id.desc())).all()
         submissions = {s.assessment_id: s for s in db.session.scalars(select(Submission).where(Submission.student_id == g.student.id))}
-        notices = db.session.scalars(select(Notification).where(Notification.student_id == g.student.id, Notification.available_at <= now()).order_by(Notification.id.desc()).limit(20)).all()
+        allowed_recordings = select(Recording.id).where(Recording.course_id.in_(course_ids))
+        notices = db.session.scalars(select(Notification).where(Notification.student_id == g.student.id, Notification.available_at <= now(),
+            db.or_(Notification.recording_id.is_(None), Notification.recording_id.in_(allowed_recordings))).order_by(Notification.id.desc()).limit(20)).all()
         registered = set(db.session.scalars(select(ClassRegistration.class_id).where(ClassRegistration.student_id == g.student.id)))
-        return render_template('portal.html', enrollments=enrollments, classes=classes, recordings=recordings,
+        announcements = db.session.scalars(public_updates().order_by(PublicUpdate.publish_at.desc()).limit(12)).all()
+        return render_template('portal.html', enrollments=enrollments, paid_course_ids=set(course_ids), paid=paid,
+            courses=db.session.scalars(published_courses()).all(), cohorts=upcoming_cohorts(),
+            classes=classes, recordings=recordings, announcements=announcements,
             assessments=assessments, submissions=submissions, notices=notices, registered=registered)
 
+    @app.get('/class/<int:class_id>/join')
+    @student_required()
+    def class_join(class_id):
+        lesson = db.get_or_404(ClassSession,class_id)
+        if not enrollment_for(lesson.course_id):
+            abort(403)
+        if not lesson.joining or not lesson.joining.url:
+            flash('Your instructor has not posted the class joining link yet.')
+            return redirect(url_for('portal',_anchor='classes'))
+        return redirect(lesson.joining.url)
+
+    @app.get('/course/<int:course_id>/materials')
+    @student_required()
+    def course_materials(course_id):
+        course = db.get_or_404(Course,course_id)
+        if not enrollment_for(course_id):
+            abort(403)
+        if not course.resources_url:
+            flash('Your instructor will post course materials here.')
+            return redirect(url_for('portal',_anchor='my-courses'))
+        return redirect(course.resources_url)
+
+    @app.get('/course/<int:course_id>/register')
+    @student_required()
+    def course_registration(course_id):
+        course = db.get_or_404(Course,course_id)
+        if not enrollment_for(course_id):
+            abort(403)
+        if not course.registration_url:
+            flash('Your instructor will post the class registration link here.')
+            return redirect(url_for('portal',_anchor='classes'))
+        return redirect(course.registration_url)
+
+    @app.get('/recording/<int:recording_id>/watch')
+    @student_required()
+    def recording_watch(recording_id):
+        recording = db.get_or_404(Recording,recording_id)
+        if not enrollment_for(recording.course_id) or aware(recording.available_at)>now():
+            abort(403)
+        return redirect(recording.url)
+
     @app.post('/class/<int:class_id>/register')
-    @student_required(approved=True)
+    @student_required()
     def class_register(class_id):
         lesson = db.get_or_404(ClassSession, class_id)
         if not enrollment_for(lesson.course_id):
@@ -664,7 +745,7 @@ def create_app(config=None):
         return render_template('class_registered.html', lesson=lesson, registration_url=registration_url)
 
     @app.route('/attendance', methods=['GET', 'POST'])
-    @student_required(approved=True)
+    @student_required()
     def attendance():
         enrollments = db.session.scalars(select(Enrollment).where(Enrollment.student_id == g.student.id,
             Enrollment.status == 'approved', Enrollment.payment_status == 'verified')).all()
@@ -688,7 +769,7 @@ def create_app(config=None):
         return render_template('attendance.html', classes=classes, history=history)
 
     @app.post('/assessment/<int:assessment_id>/submit')
-    @student_required(approved=True)
+    @student_required()
     def submit(assessment_id):
         assessment = db.get_or_404(Assessment, assessment_id)
         if not enrollment_for(assessment.course_id):
@@ -710,7 +791,7 @@ def create_app(config=None):
         return redirect(url_for('portal', _anchor='assignments'))
 
     @app.post('/notification/<int:notice_id>/read')
-    @student_required(approved=True)
+    @student_required()
     def notice_read(notice_id):
         notice = db.get_or_404(Notification, notice_id)
         if notice.student_id != g.student.id:
@@ -763,30 +844,19 @@ def create_app(config=None):
                     item.starts_at, item.ends_at = start, end
                     item.location, item.registration_url = field('location',250,False), link
                     item.published, item.publish_at, item.updated_at = state == 'published', utc_field('publish_at',True) or now(), now()
-                elif action in ('verify_payment', 'approve', 'reject'):
+                elif action in ('verify_payment', 'verify_and_approve', 'approve', 'reject'):
                     enrollment = db.get_or_404(Enrollment, int(field('enrollment_id', 20)))
-                    if action == 'verify_payment':
-                        if enrollment.payment_status != 'submitted' or not enrollment.payment_reference:
+                    if action in ('verify_payment', 'verify_and_approve'):
+                        if enrollment.payment_status not in ('submitted','verified') or not enrollment.payment_reference:
                             raise ValueError('The student must submit a payment reference before you verify payment.')
                         enrollment.payment_status = 'verified'
-                        enrollment.verified_at = now()
+                        enrollment.verified_at = enrollment.verified_at or now()
+                        if action == 'verify_and_approve':
+                            confirm_enrollment(enrollment)
                     elif action == 'approve':
-                        if enrollment.payment_status != 'verified':
-                            raise ValueError('Verify the enrollment payment before approving access.')
-                        was_approved = enrollment.status == 'approved'
-                        enrollment.status, enrollment.approved_at = 'approved', now()
-                        enrollment.student.approved = True
-                        if not was_approved:
-                            notify(enrollment.student_id, 'Your enrollment is approved', f'Welcome to {enrollment.course.name}. Your course is now available.')
-                            for recording in db.session.scalars(select(Recording).where(Recording.course_id == enrollment.course_id)):
-                                if not db.session.scalar(select(Notification).where(Notification.student_id == enrollment.student_id, Notification.recording_id == recording.id)):
-                                    notify(enrollment.student_id, 'Class recording available', recording.title, recording.available_at, recording.id)
+                        confirm_enrollment(enrollment)
                     else:
                         enrollment.status = 'rejected'
-                        db.session.flush()
-                        enrollment.student.approved = bool(db.session.scalar(select(Enrollment.id).where(
-                            Enrollment.student_id == enrollment.student_id, Enrollment.status == 'approved',
-                            Enrollment.payment_status == 'verified').limit(1)))
                         notify(enrollment.student_id, 'Enrollment needs attention', 'Please contact portal support about your enrollment.')
                 elif action == 'cohort':
                     course = db.get_or_404(Course, int(field('course_id', 20)))
@@ -810,8 +880,18 @@ def create_app(config=None):
                                                            for i,country in enumerate(COUNTRIES)}
                 elif action == 'class':
                     course = db.get_or_404(Course, int(field('course_id', 20)))
-                    db.session.add(ClassSession(course_id=course.id, title=field('title', 150), starts_at=utc_field('starts_at'),
-                        registration_url=valid_url(field('registration_url', 3000, False), True)))
+                    lesson = ClassSession(course_id=course.id, title=field('title', 150), starts_at=utc_field('starts_at'),
+                        registration_url=valid_url(field('registration_url', 3000, False), True))
+                    lesson.joining = ClassJoinLink(url=valid_url(field('join_url',3000,False),True))
+                    db.session.add(lesson)
+                elif action == 'class_links':
+                    lesson = db.get_or_404(ClassSession,int(field('class_id',20)))
+                    lesson.registration_url = valid_url(field('registration_url',3000,False),True)
+                    link = valid_url(field('join_url',3000,False),True)
+                    if not lesson.joining:
+                        lesson.joining = ClassJoinLink(url=link)
+                    else:
+                        lesson.joining.url = link
                 elif action == 'recording':
                     course = db.get_or_404(Course, int(field('course_id', 20)))
                     recording = Recording(course_id=course.id, title=field('title', 150), url=valid_url(field('url', 3000)),
@@ -849,6 +929,7 @@ def create_app(config=None):
                 flash(str(exc) if isinstance(exc, ValueError) else 'That record already exists. Check the details.')
             return redirect(url_for('admin'))
         return render_template('admin.html', next_dates=next_start_dates(), students=db.session.scalars(select(Student).order_by(Student.created_at.desc())).all(),
+            account_requests=db.session.scalars(select(AccountRequest).order_by(AccountRequest.created_at.desc())).all(),
             public_content=db.session.scalars(select(PublicUpdate).order_by(PublicUpdate.updated_at.desc())).all(),
             enrollments=db.session.scalars(select(Enrollment).order_by(Enrollment.created_at.desc())).all(),
             courses=db.session.scalars(select(Course).order_by(Course.id)).all(),

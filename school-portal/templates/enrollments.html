@@ -4,11 +4,11 @@
 {% block content %}
 <div class="page-heading">
   <div><p class="eyebrow">WELCOME, {{ g.student.name }}</p><h1>Your learning starts here.</h1><p>Choose your program and review the tuition, curriculum, and upcoming batches.</p></div>
-  <span class="status {{ 'success' if g.student.approved else 'pending' }}">{{ 'Portal approved' if g.student.approved else 'Awaiting enrollment approval' }}</span>
+  <span class="status {{ 'success' if g.student.approved else 'pending' }}">Account active · Enrollment requires payment</span>
 </div>
 <section class="panel account-summary">
   <div><p class="eyebrow">YOUR STUDENT NUMBER</p><strong class="student-number">{{ g.student.student_number }}</strong><p>{{ g.student.kind|title }} student · {{ g.student.country }}</p></div>
-  <div><h3>Request your account review</h3><p>Your account is listed in the administrator dashboard. You can also send your student number to LionTech on WhatsApp.</p>{{ external(account_request_url, 'Send account request on WhatsApp', 'outline') }}<p class="muted">Open WhatsApp and tap Send to deliver this request.</p></div>
+  <div><h3>Your account is active</h3><p>Your account is automatically approved. Send your account details to support on WhatsApp if you need help.</p>{{ external(account_request_url, 'Send account request on WhatsApp', 'outline') }}<p class="muted">Open WhatsApp and tap Send to deliver this request.</p></div>
 </section>
 {% if requested %}
 <h2>My selected programs</h2>
@@ -18,20 +18,7 @@
   <div class="heading-row"><h3>{{ e.course.name }}</h3><span class="status {{ 'success' if e.status == 'approved' else 'pending' }}">{{ e.status|title }}</span></div>
   {% if g.student.kind == 'new' %}<p><strong>Your selected start:</strong> {{ e.cohort.start_date.strftime('%A, %B %d, %Y') if e.cohort else 'Contact support to confirm your start date.' }}</p>{% endif %}
   {{ program_details(e.course, g.student.country, cohorts) }}
-  <div class="payment-box"><strong>Enrollment payment · {{ e.payment_status|replace('_',' ')|title }}</strong>
-  {% if e.payment_status == 'verified' %}
-    <p>Payment verified by your administrator.</p>
-    {% if e.status == 'approved' %}<a class="button blue" href="{{ url_for('portal') }}">Open my portal →</a>{% else %}<p>Awaiting final portal approval.</p>{% endif %}
-  {% else %}
-    {% if payment %}<p>{{ payment[1] }}</p>{{ external(payment[0],payment[1],'red') }}
-    {% else %}<p>Contact support to arrange the enrollment fee for your country.</p>{{ external(support_url,'Arrange enrollment payment','outline') }}{% endif %}
-    <p class="muted">After payment, submit your Flutterwave transaction reference. Clicking the payment link does not confirm payment.</p>
-    <form action="{{ url_for('payment',enrollment_id=e.id) }}" method="post">{{ token() }}
-      <label>Payment / transaction reference<input name="reference" maxlength="150" value="{{ e.payment_reference or '' }}" required></label>
-      <label>Payment details for the administrator<textarea name="note" maxlength="1000" rows="2" placeholder="Payer name, payment date, or details to find your receipt">{{ e.payment_note }}</textarea></label>
-      <button class="button blue">{{ 'Update payment reference' if e.payment_status == 'submitted' else 'Submit payment for verification' }}</button>
-    </form>
-  {% endif %}</div>
+  {% include 'enrollment_payment.html' %}
 </article>
 {% endfor %}
 </section>

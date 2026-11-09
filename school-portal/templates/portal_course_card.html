@@ -1,0 +1,9 @@
+{% set unlocked=e.course_id in paid_course_ids %}
+<article class="panel" id="enrollment-{{ e.id }}">
+  <div class="heading-row"><h3>{{ e.course.name }}</h3><span class="status {{ 'success' if unlocked else 'pending' }}">{{ 'Enrollment confirmed' if unlocked else ('Follow-up needed' if e.status=='rejected' else 'Enrollment pending payment confirmation') }}</span></div>
+  {% if e.cohort %}<p><strong>Your batch starts:</strong> {{ e.cohort.start_date.strftime('%A, %B %d, %Y') }}</p>{% endif %}
+  {{ program_details(e.course,g.student.country,cohorts) }}
+  {% include 'enrollment_payment.html' %}
+  {% if unlocked %}<div class="actions course-access">{% if e.course.registration_url %}<a class="button blue" href="{{ url_for('course_registration',course_id=e.course_id) }}" target="_blank" rel="noopener">Register for live class ↗</a>{% endif %}{% if e.course.resources_url %}<a class="button outline" href="{{ url_for('course_materials',course_id=e.course_id) }}" target="_blank" rel="noopener">Access class materials ↗</a>{% endif %}</div>
+  {% else %}<div class="access-locked"><strong>Class access locked</strong><p>Registration, joining links, materials, recordings and coursework unlock after payment verification and enrollment approval.</p></div>{% endif %}
+</article>

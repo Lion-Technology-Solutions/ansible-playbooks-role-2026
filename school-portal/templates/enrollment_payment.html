@@ -1,0 +1,14 @@
+{% set payment=course_payment(e.course,g.student.country) %}
+<div class="payment-box" id="payment-{{ e.id }}"><h4>Payment methods &amp; enrollment confirmation</h4><p>Payment status: <strong>{{ e.payment_status|replace('_',' ')|title }}</strong></p>
+{% if e.payment_status=='verified' %}
+  <p>Payment verified by your administrator.</p>{% if e.status=='approved' %}<p class="status success">Enrollment confirmed · Class access unlocked</p>{% else %}<p>Payment received. Your enrollment is awaiting final approval.</p>{% endif %}
+{% else %}
+  {% if payment %}<p>{{ payment[1] }}</p>{{ external(payment[0],payment[1],'red') }}<p class="muted">Open the secure payment page to choose from its available payment methods.</p>
+  {% else %}<p>Contact support to arrange payment for this program and country.</p>{{ external(support_url,'Arrange enrollment payment','outline') }}{% endif %}
+  <p class="muted">Submit your payment receipt / transaction reference below. A reference or checkout click does not confirm payment; the administrator verifies it.</p>
+  <form action="{{ url_for('payment',enrollment_id=e.id) }}" method="post">{{ token() }}
+    <label>Payment / transaction reference<input name="reference" maxlength="150" value="{{ e.payment_reference or '' }}" required></label>
+    <label>Payment details for the administrator<textarea name="note" maxlength="1000" rows="2" placeholder="Payer name, payment method and date">{{ e.payment_note }}</textarea></label>
+    <button class="button blue">{{ 'Update payment reference' if e.payment_status=='submitted' else 'Submit payment for verification' }}</button>
+  </form>
+{% endif %}</div>

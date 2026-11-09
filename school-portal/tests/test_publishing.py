@@ -91,7 +91,8 @@ def test_unpublishing_preserves_current_students_access(app):
     assert visitor.get('/courses/data-analytics').status_code==404
     assert b'Data Analytics' not in visitor.get('/').data
     page=student.get('/portal')
-    assert page.status_code==200 and b'yBAAj2k5TM2lEqpMXZY3ZQ' in page.data
+    assert page.status_code==200 and b'Register for live class' in page.data
+    assert 'yBAAj2k5TM2lEqpMXZY3ZQ' in student.get(f'/course/{course}/register').location
     with app.app_context():
         assert db.session.get(Enrollment,eid).status=='approved'
 

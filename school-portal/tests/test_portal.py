@@ -71,7 +71,7 @@ def test_registration_country_payments_dates_and_existing_students(app):
         assert b'Choose an available start date' in request_enrollment(client,course).data
         page=request_enrollment(client,course,cohort)
         assert link in page.data
-        assert client.get('/portal').location.endswith('/enrollments')
+        assert client.get('/portal').status_code == 200
     existing=app.test_client()
     register(existing,email='existing@example.com',kind='existing')
     page=existing.get('/enrollments')
@@ -81,7 +81,7 @@ def test_registration_country_payments_dates_and_existing_students(app):
         s=db.session.scalar(select(Student).where(Student.email=='existing@example.com'))
         e=db.session.scalar(select(Enrollment).where(Enrollment.student_id==s.id))
         assert e.cohort_id is None
-        assert not s.approved
+        assert s.approved
         assert 'student-password' not in s.password_hash
     duplicate=app.test_client()
     assert b'already has an account' in register(duplicate,email='existing@example.com').data
@@ -99,14 +99,16 @@ def test_payment_must_be_verified_before_approval(app):
     assert b'Verify the enrollment payment' in result.data
     assert b'must submit a payment reference' in post(manager,'/admin',action='verify_payment',enrollment_id=enrollment_id).data
     post(student,f'/enrollment/{enrollment_id}/payment',reference='MY-REAL-TRANSACTION')
-    assert student.get('/portal').status_code == 302
+    assert student.get('/portal').status_code == 200
+    assert student.get(f'/course/{course}/materials').status_code == 403
     post(manager,'/admin',action='verify_payment',enrollment_id=enrollment_id)
-    assert student.get('/portal').status_code == 302
+    assert student.get('/portal').status_code == 200
+    assert student.get(f'/course/{course}/materials').status_code == 403
     post(manager,'/admin',action='approve',enrollment_id=enrollment_id)
     page=student.get('/portal')
     assert page.status_code == 200
-    assert b'yBAAj2k5TM2lEqpMXZY3ZQ' in page.data
-    assert b'186T95HhFghqKXATdxzXvvu43OWSmBFL2' in page.data
+    assert b'yBAAj2k5TM2lEqpMXZY3ZQ' in student.get(f'/course/{course}/register').location.encode()
+    assert b'186T95HhFghqKXATdxzXvvu43OWSmBFL2' in student.get(f'/course/{course}/materials').location.encode()
     assert b'Your enrollment is approved' in page.data
 
 
@@ -118,7 +120,8 @@ def test_student_isolation_and_malicious_form_input(app):
     course,cohort=analytics(app)
     eid=approve(app,alice,manager,course,cohort)
     assert bob.post(f'/enrollment/{eid}/payment',data={'csrf':csrf(bob,'/enrollments'),'reference':'STOLEN'}).status_code == 403
-    assert bob.get('/portal').status_code == 302
+    assert bob.get('/portal').status_code == 200
+    assert bob.get(f'/course/{course}/materials').status_code == 403
     assert alice.post('/admin',data={'csrf':csrf(alice,'/portal'),'action':'approve','enrollment_id':eid}).status_code == 302
     with app.app_context():
         other=db.session.scalar(select(Course).where(Course.slug=='devops'))
@@ -200,6 +203,8 @@ def test_revocation_password_reset_and_durable_records(app):
     assert student.get('/portal').status_code == 200
     post(manager,'/admin',action='reject',enrollment_id=eid)
     assert b'yBAAj2k5TM2lEqpMXZY3ZQ' not in student.get('/portal').data
+    assert student.get('/portal').status_code == 200
+    assert student.get(f'/course/{course}/materials').status_code == 403
     with app.app_context():
         assert db.session.get(Student,sid).email=='student@example.com'
         assert db.session.get(Enrollment,eid).status=='rejected'
@@ -247,7 +252,7 @@ def test_student_numbers_for_new_existing_and_legacy_accounts(app):
         assert db.session.get(Student,legacy_id).student_number == legacy_number
         assert len(list(db.session.scalars(select(StudentIdentity.student_id)))) == 3
         assert [db.session.get(Student,s.id).student_number for s in students] == numbers
-    link = re.search(rb'href="(https://wa.me/14375756656\?text=LionTech\+student[^\"]+)"',new_page.data)[1].decode()
+    link = re.search(rb'href="(https://wa.me/14375756656\?text=LionTech\+account[^\"]+)"',new_page.data)[1].decode()
     message = parse_qs(urlsplit(link).query)['text'][0]
     assert numbers[0] in message and 'Student Example' in message
     assert b'tap Send' in new_page.data
