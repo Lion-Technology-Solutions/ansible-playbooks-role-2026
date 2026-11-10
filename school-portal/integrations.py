@@ -197,6 +197,13 @@ def install(app,db,m,h):
                     except ValueError:state,message='error','The provider could not verify this setup. Check credentials, permissions and provider approval.'
                     except Exception:state,message='error','The provider could not be reached or returned an unexpected response. Retry later.'
                     row.status,row.detail,row.checked_at=state,message,now();audit(provider,'connection_test',state);db.session.commit();dispatch();flash(message)
+                elif action=='test_generation' and provider=='openai':
+                    if not row or not row.enabled:raise ValueError('Save and enable OpenAI before testing an AI answer.')
+                    try:
+                        message=app.extensions['assistant']['probe']()
+                        row.status='connected';row.detail=message;row.checked_at=now();db.session.commit();flash(message)
+                    except ValueError as error:
+                        row.detail=str(error);db.session.commit();flash(str(error))
                 elif action in ('pause','resume'):
                     if not row:raise ValueError('Save settings before changing connection state.')
                     row.enabled=action=='resume';row.revision+=1;row.updated_at=now();audit(provider,action,'paused' if action=='pause' else 'resumed');db.session.commit();dispatch();flash('Connection paused.' if action=='pause' else 'Connection resumed. Validate its status before use.')

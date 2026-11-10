@@ -6,6 +6,7 @@ import re
 import secrets
 from datetime import datetime,timedelta,timezone
 from urllib.request import Request,urlopen
+from urllib.error import HTTPError,URLError
 from flask import abort,flash,g,redirect,render_template,request,session,url_for
 from sqlalchemy import select,func,text
 from zoneinfo import ZoneInfo
@@ -27,6 +28,60 @@ LABELS={'create_course':'Create program','edit_course':'Update / publish program
 SCHEMA={'type':'object','additionalProperties':False,'required':['reply','action','target','fields'],'properties':{
  'reply':{'type':'string'},'action':{'type':'string','enum':['answer',*FIELDS]},'target':{'type':'integer'},
  'fields':{'type':'array','items':{'type':'object','additionalProperties':False,'required':['key','value'],'properties':{'key':{'type':'string'},'value':{'type':'string'}}}}}}
+
+
+class AIRequestError(ValueError):
+    def __init__(self,category,message):
+        self.category=category
+        super().__init__(message)
+
+
+def request_failure(error):
+    """Classify provider failures without exposing body text, prompts or credentials."""
+    if isinstance(error,AIRequestError):return error
+    if isinstance(error,HTTPError):
+        code='';param=''
+        try:
+            detail=json.loads(error.read(65536)).get('error',{})
+            code=detail.get('code');param=detail.get('param')
+        except Exception:pass
+        if code in ('insufficient_quota','billing_hard_limit_reached','billing_not_active','usage_limit_reached'):
+            return AIRequestError('quota_exhausted','OpenAI has no available API quota for this project. Check API billing, credits and project spending limits, then retry. A successful key check does not verify available credits.')
+        if error.code==401:return AIRequestError('authentication','OpenAI rejected the API key (HTTP 401). Replace or re-save the key in Integrations, then test it.')
+        if error.code==403:return AIRequestError('permission_denied','OpenAI denied generation access (HTTP 403). Give this project key Responses write access and access to the selected model, then retry.')
+        if code=='model_not_found' or error.code==404:return AIRequestError('model_unavailable','The configured model is not available to this OpenAI project. Check the exact model ID and its access in Integrations.')
+        if error.code==429:return AIRequestError('rate_limited','OpenAI is temporarily rate-limiting this project (HTTP 429). Wait a moment and retry; check your project rate limits if this continues.')
+        if error.code in (400,422):
+            message='OpenAI rejected the response format or a request setting (HTTP '+str(error.code)+'). Check that the selected model supports Responses and structured JSON output.'
+            if param=='model':message='OpenAI rejected the configured model (HTTP '+str(error.code)+'). Check the exact model ID and Responses support in Integrations.'
+            return AIRequestError('invalid_request',message)
+        if error.code>=500:return AIRequestError('provider_unavailable','OpenAI is temporarily unavailable (HTTP '+str(error.code)+'). Please retry later.')
+        return AIRequestError('provider_rejected','OpenAI rejected this request (HTTP '+str(error.code)+'). Check your project access and try again.')
+    if isinstance(error,(TimeoutError,URLError)):
+        return AIRequestError('network_timeout','The OpenAI request timed out or could not connect. No automatic retry was made. Please retry a shorter request.')
+    return AIRequestError('invalid_output','The AI provider did not return a usable answer. Try a shorter request with one specific task. The failed response was not applied.')
+
+
+def response_payload(model,instructions,input_data):
+    payload=dict(model=model,store=False,instructions=instructions,input=json.dumps(input_data,ensure_ascii=False),max_output_tokens=2500,text={'format':{'type':'json_schema','name':'portal_assistance','strict':True,'schema':SCHEMA}})
+    # Verified for this family only; do not send model-specific options to arbitrary models.
+    if model=='gpt-5.4-mini' or model.startswith('gpt-5.4-mini-'):payload['reasoning']={'effort':'none'}
+    return payload
+
+
+def response_answer(response):
+    if response.get('status')=='incomplete':
+        reason=(response.get('incomplete_details') or {}).get('reason')
+        if reason=='max_output_tokens':raise AIRequestError('output_limit','The answer reached the response token limit before finishing. Ask for one smaller update or a shorter curriculum. No partial draft was applied.')
+        raise AIRequestError('incomplete','OpenAI did not complete this answer. Try a shorter or rephrased request.')
+    if response.get('status')=='failed':raise AIRequestError('provider_failed','OpenAI could not complete this response. Check the selected model and project status, then retry.')
+    if response.get('status')!='completed':raise AIRequestError('incomplete','The AI response is not complete. Please retry later.')
+    parts=[part for item in response.get('output',[]) if item.get('type')=='message' for part in item.get('content',[])]
+    if any(part.get('type')=='refusal' for part in parts):raise AIRequestError('refused','OpenAI declined this request. Rephrase it as a specific program, lesson or schedule task, or contact support.')
+    output=''.join(part.get('text','') for part in parts if part.get('type')=='output_text')
+    answer=json.loads(output)
+    if not isinstance(answer,dict) or set(answer)!=set(SCHEMA['required']) or not isinstance(answer['reply'],str) or len(answer['reply'])>12000:raise ValueError('Invalid AI answer.')
+    return answer
 
 
 def openai_request(values,payload):
@@ -137,13 +192,10 @@ def install(app,db,m,h):
         if is_admin:
             instructions+=('You may propose ONE editable administrative draft. No tools can execute changes. action must match the requested task. target is the exact existing program ID for edit_course/program_profile/create_lesson/class_create/cohort, existing lesson ID for edit_lesson, existing class ID for class_update, or 0 for create_course/create_update/answer. Return only requested changed fields using the allowlist below; the server preserves other fields. Use program_profile for curriculum/duration/schedule descriptions; class_update for an actual live-class date/time. Publication defaults to draft; propose published only when explicitly asked to publish/launch. For class changes require a specific local date, time and IANA timezone; never guess timezone or resolve ambiguous dates silently. A cohort ID must belong to the program; empty means all cohorts. starts_at is local YYYY-MM-DDTHH:MM with timezone separately. Lesson available_at is UTC. New program prices are configured separately. Announcement is public. Publication triggers normal portal behavior and class notifications. Allowed fields: '+json.dumps(FIELDS))
         else:instructions+='Students are read-only. Always return action=answer, target=0, fields=[]. You cannot schedule or update programs. Explain access restrictions and send unresolved inquiries to support. Do not promise a refund, enrollment or payment verification.'
-        payload=dict(model=model,store=False,instructions=instructions,input=json.dumps({'portal_data':data,'question':question},ensure_ascii=False),max_output_tokens=2500,text={'format':{'type':'json_schema','name':'portal_assistance','strict':True,'schema':SCHEMA}})
+        payload=response_payload(model,instructions,{'portal_data':data,'question':question})
         try:
             response=app.config.get('OPENAI_REQUEST',openai_request)(values,payload)
-            if response.get('status')!='completed':raise ValueError('Incomplete AI response.')
-            output=''.join(part.get('text','') for item in response.get('output',[]) if item.get('type')=='message' for part in item.get('content',[]) if part.get('type')=='output_text')
-            answer=json.loads(output)
-            if not isinstance(answer,dict) or set(answer)!=set(SCHEMA['required']) or not isinstance(answer['reply'],str) or len(answer['reply'])>12000:raise ValueError('Invalid AI answer.')
+            answer=response_answer(response)
             action=answer['action'];target=answer['target'];items=answer['fields']
             if action not in ['answer',*FIELDS] or type(target) is not int or target<0 or not isinstance(items,list) or len(items)>20:raise ValueError('Invalid AI action.')
             if not is_admin and (action!='answer' or target or items):raise ValueError('Student assistance is read-only.')
@@ -170,9 +222,32 @@ def install(app,db,m,h):
             usage.input_tokens=max(0,int(token_usage.get('input_tokens',0)));usage.output_tokens=max(0,int(token_usage.get('output_tokens',0)))
             db.session.commit()
             return answer['reply'],draft
-        except Exception:
-            db.session.rollback();usage=db.session.get(Usage,usage_id);usage.status='failed';db.session.commit()
-            raise ValueError('The AI provider did not return a usable answer. No portal changes were made. Check model access, Responses permission, billing or retry with more precise details.') from None
+        except Exception as error:
+            failure=request_failure(error)
+            db.session.rollback();usage=db.session.get(Usage,usage_id);usage.status='failed'
+            db.session.add(M('IntegrationAudit')(provider='openai',action='response_failed',status=failure.category))
+            db.session.commit()
+            app.logger.warning('OpenAI response failed: category=%s',failure.category)
+            raise ValueError(str(failure)+' No portal changes were made.') from None
+
+    def probe():
+        values=service['config']('openai');model=values.get('OPENAI_MODEL','')
+        if not values.get('OPENAI_API_KEY') or not re.fullmatch(r'[a-zA-Z0-9._-]{1,100}',model):raise ValueError('Save a valid API key and model before testing an AI answer.')
+        usage_id=reserve(True)
+        try:
+            response=app.config.get('OPENAI_REQUEST',openai_request)(values,response_payload(model,'Return a short connectivity greeting. Always use action=answer, target=0 and fields=[].',{'question':'Reply with Ready.'}))
+            result=response_answer(response)
+            if result['action']!='answer' or result['target']!=0 or result['fields']:raise ValueError('Unexpected connection probe output.')
+            usage=db.session.get(Usage,usage_id);usage.status='completed'
+            usage.input_tokens=max(0,int((response.get('usage') or {}).get('input_tokens',0)))
+            usage.output_tokens=max(0,int((response.get('usage') or {}).get('output_tokens',0)))
+            db.session.add(M('IntegrationAudit')(provider='openai',action='generation_test',status='passed'));db.session.commit()
+            return 'AI response test passed. Your key, model and structured response generation worked. No portal content was sent or changed.'
+        except Exception as error:
+            failure=request_failure(error);db.session.rollback();db.session.get(Usage,usage_id).status='failed'
+            db.session.add(M('IntegrationAudit')(provider='openai',action='generation_test',status=failure.category));db.session.commit()
+            app.logger.warning('OpenAI generation test failed: category=%s',failure.category)
+            raise ValueError(str(failure)) from None
 
     def page(is_admin):
         reply='';draft=None;error='';question=''
@@ -231,4 +306,4 @@ def install(app,db,m,h):
         # Existing handler validation and commit make consumption atomic with the real change.
         draft.status='applied';db.session.add(M('IntegrationAudit')(provider='openai',action=draft.action,status='admin_confirmed'))
 
-    return dict(confirm_submission=confirm_submission,context=context)
+    return dict(probe=probe,confirm_submission=confirm_submission,context=context)

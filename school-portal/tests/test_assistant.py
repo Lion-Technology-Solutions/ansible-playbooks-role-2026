@@ -196,3 +196,42 @@ def test_new_start_dates_public_announcements_and_connected_zoom_scheduling(app)
     answer(app,action='class_update',target=cid,fields={'starts_at':'2031-05-11T19:00'})
     ask(manager);assert b'Class saved' in apply(app,manager,latest(app)).data
     assert len(calls)==2 and calls[-1][0]=='PATCH' and calls[-1][1]=='meetings/zoom-123'
+
+
+def test_provider_failures_distinguish_quota_rate_permission_and_invalid_request(app):
+    import io
+    from urllib.error import HTTPError
+    manager,student=setup(app);ready(app,manager)
+    cases=[(429,'insufficient_quota','quota_exhausted',b'no available API quota'),(429,'rate_limit_exceeded','rate_limited',b'rate-limiting'),(403,'permission_denied','permission_denied',b'Responses write access'),(400,'invalid_json_schema','invalid_request',b'response format'),(401,'invalid_api_key','authentication',b'HTTP 401')]
+    for status,code,category,expected in cases:
+        def fail(*args):raise HTTPError('https://api.openai.com/v1/responses',status,'secret response',{},io.BytesIO(json.dumps({'error':{'code':code,'message':'PRIVATE-OPENAI-KEY and confidential prompt'}}).encode()))
+        app.config['OPENAI_REQUEST']=fail
+        page=ask(manager);assert expected in page.data and b'PRIVATE-OPENAI-KEY' not in page.data and b'confidential prompt' not in page.data
+        with app.app_context():assert db.session.scalar(select(IntegrationAudit).order_by(IntegrationAudit.id.desc())).status==category
+    with app.app_context():assert not db.session.scalar(select(AssistantDraft))
+
+
+def test_incomplete_refused_and_timeout_do_not_apply_partial_outputs(app):
+    manager,student=setup(app);ready(app,manager)
+    app.config['OPENAI_REQUEST']=lambda *args:{'status':'incomplete','incomplete_details':{'reason':'max_output_tokens'},'output':[{'type':'message','content':[{'type':'output_text','text':'{"action":"create_course"'}]}]}
+    assert b'response token limit' in ask(manager).data
+    app.config['OPENAI_REQUEST']=lambda *args:{'status':'completed','output':[{'type':'message','content':[{'type':'refusal','refusal':'private text not shown'}]}]}
+    page=ask(manager);assert b'declined this request' in page.data and b'private text not shown' not in page.data
+    def timeout(*args):raise TimeoutError('private transport details')
+    app.config['OPENAI_REQUEST']=timeout
+    page=ask(manager);assert b'timed out' in page.data and b'private transport details' not in page.data
+    with app.app_context():assert not db.session.scalar(select(AssistantDraft))
+
+
+def test_actual_generation_probe_uses_schema_without_student_context_and_requires_admin_password(app):
+    manager,student=setup(app);ready(app,manager);seen=[];answer(app,seen=seen)
+    assert configure(app,manager,'openai',action='test_generation',admin_password='wrong').status_code==403
+    result=configure(app,manager,'openai',action='test_generation');assert b'AI response test passed' in result.data
+    assert len(seen)==1 and json.loads(seen[0][1]['input'])=={'question':'Reply with Ready.'}
+    assert seen[0][1]['text']['format']['strict'] and seen[0][1]['reasoning']=={'effort':'none'}
+    with app.app_context():assert not db.session.scalar(select(AssistantDraft))
+    import io
+    from urllib.error import HTTPError
+    def fail(*args):raise HTTPError('https://api.openai.com/v1/responses',429,'',{},io.BytesIO(b'{"error":{"code":"insufficient_quota"}}'))
+    app.config['OPENAI_REQUEST']=fail
+    result=configure(app,manager,'openai',action='test_generation');assert b'no available API quota' in result.data
