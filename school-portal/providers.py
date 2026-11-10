@@ -8,7 +8,8 @@ import time
 from urllib.parse import urlencode, quote
 from urllib.request import Request, urlopen
 
-ORIGIN='https://liontech-student-portal.vercel.app'
+ORIGIN='https://www.liontechacademy.com'
+LEGACY_ORIGIN='https://liontech-student-portal.vercel.app'
 
 def setting(key,default=''):
     from integrations import credential

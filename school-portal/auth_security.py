@@ -1,7 +1,7 @@
 """Verified activation, primary sign-in, server-enforced MFA and single-use recovery."""
 import base64,hashlib,hmac,io,json,re,secrets,time,os,ipaddress
 from datetime import timedelta
-from urllib.parse import urlencode,quote
+from urllib.parse import urlencode,quote,urlsplit
 from flask import abort,flash,g,jsonify,redirect,render_template,request,session,url_for,Response
 from sqlalchemy import select,text
 from sqlalchemy.exc import IntegrityError
@@ -12,9 +12,10 @@ from webauthn.helpers.structs import AuthenticatorSelectionCriteria,UserVerifica
 from authlib.integrations.requests_client import OAuth2Session
 from authlib.jose import JsonWebToken
 from authlib.oidc.core import CodeIDToken
-from providers import ORIGIN,api
+from providers import ORIGIN,LEGACY_ORIGIN,api
 
-RP_ID='liontech-student-portal.vercel.app'
+RP_ID=urlsplit(ORIGIN).hostname
+LEGACY_RP_ID=urlsplit(LEGACY_ORIGIN).hostname
 DUMMY_PASSWORD=generate_password_hash('not-a-real-account-'+secrets.token_hex(20),method='pbkdf2:sha256:600000')
 def b64(data):return base64.urlsafe_b64encode(data).decode().rstrip('=')
 def unb64(data):return base64.urlsafe_b64decode(data+'='*(-len(data)%4))
@@ -367,20 +368,28 @@ def install(app,db,m,h):
             except Exception:db.session.rollback();flash('Verification could not be completed. Try another registered method or a recovery code.')
         return render_template('mfa_challenge.html',factors=factors(student.id),student_number=student.student_number)
 
+    def passkey_site():
+        host=request.host.split(':',1)[0].lower()
+        if host==RP_ID or (app.testing and host=='localhost'):return RP_ID,ORIGIN
+        if host==LEGACY_RP_ID:return LEGACY_RP_ID,LEGACY_ORIGIN
+        abort(400,'Passkeys are available only on the academy production domain or the original portal address.')
+    def passkeys_for_site(student_id,rp_id):
+        return [f for f in factors(student_id) if f.method=='passkey' and service['unseal']('auth_factor',f.id,f.ciphertext).get('rp_id',LEGACY_RP_ID)==rp_id]
+
     @app.post('/account/security/passkey/options')
     def passkey_options():
         student,row=actor();limit('passkey-options:'+student.id,15)
-        mode=request.form.get('mode')
+        mode=request.form.get('mode');rp_id,origin=passkey_site()
         if mode=='register':
             try:manage_allowed(student,row)
             except ValueError as error:abort(403,str(error))
-            options=generate_registration_options(rp_id=RP_ID,rp_name='LionTech Academy',user_id=student.id.encode(),user_name=student.student_number,user_display_name=student.name,authenticator_selection=AuthenticatorSelectionCriteria(user_verification=UserVerificationRequirement.REQUIRED,resident_key=ResidentKeyRequirement.PREFERRED),exclude_credentials=[PublicKeyCredentialDescriptor(id=unb64(f.credential_id)) for f in factors(student.id) if f.method=='passkey'])
+            options=generate_registration_options(rp_id=rp_id,rp_name='LionTech Academy',user_id=student.id.encode(),user_name=student.student_number,user_display_name=student.name,authenticator_selection=AuthenticatorSelectionCriteria(user_verification=UserVerificationRequirement.REQUIRED,resident_key=ResidentKeyRequirement.PREFERRED),exclude_credentials=[PublicKeyCredentialDescriptor(id=unb64(f.credential_id)) for f in passkeys_for_site(student.id,rp_id)])
         elif mode=='authenticate':
-            keys=[PublicKeyCredentialDescriptor(id=unb64(f.credential_id)) for f in factors(student.id) if f.method=='passkey']
-            if not keys:abort(400,'No passkey is registered.')
-            options=generate_authentication_options(rp_id=RP_ID,allow_credentials=keys,user_verification=UserVerificationRequirement.REQUIRED)
+            keys=[PublicKeyCredentialDescriptor(id=unb64(f.credential_id)) for f in passkeys_for_site(student.id,rp_id)]
+            if not keys:abort(400,'No passkey is registered for this hostname. Use a recovery code or another method; original-address passkeys remain usable on the original portal address.')
+            options=generate_authentication_options(rp_id=rp_id,allow_credentials=keys,user_verification=UserVerificationRequirement.REQUIRED)
         else:abort(400)
-        record,_=challenge(student,'passkey_'+mode,row.digest,{'challenge':b64(options.challenge)},5);session['passkey_'+mode]=record.id
+        record,_=challenge(student,'passkey_'+mode,row.digest,{'challenge':b64(options.challenge),'rp_id':rp_id,'origin':origin},5);session['passkey_'+mode]=record.id
         return jsonify(json.loads(options_to_json(options)))
     @app.post('/account/security/passkey/verify')
     def passkey_verify():
@@ -389,10 +398,12 @@ def install(app,db,m,h):
         if mode not in ('register','authenticate'):abort(400)
         try:
             record,values=load_challenge(session.get('passkey_'+mode),'passkey_'+mode,student,row.digest);credential=data.get('credential')
+            rp_id,origin=passkey_site()
+            if values.get('rp_id')!=rp_id or values.get('origin')!=origin:raise ValueError()
             if mode=='register':
                 manage_allowed(student,row)
-                result=verify_registration_response(credential=credential,expected_challenge=unb64(values['challenge']),expected_rp_id=RP_ID,expected_origin=ORIGIN,require_user_verification=True)
-                new_factor(student,'passkey',{'public_key':b64(result.credential_public_key)},credential_id=b64(result.credential_id),sign_count=result.sign_count);record.consumed=True
+                result=verify_registration_response(credential=credential,expected_challenge=unb64(values['challenge']),expected_rp_id=rp_id,expected_origin=origin,require_user_verification=True)
+                new_factor(student,'passkey',{'public_key':b64(result.credential_public_key),'rp_id':rp_id,'origin':origin},credential_id=b64(result.credential_id),sign_count=result.sign_count);record.consumed=True
                 # Codes are shown once on a server-rendered page; never put them in cookies.
                 row.mfa_at=now();row.expires_at=now()+timedelta(hours=4)
                 db.session.commit();audit('passkey_enrolled');db.session.commit()
@@ -400,7 +411,8 @@ def install(app,db,m,h):
                 factor=db.session.scalar(select(Factor).where(Factor.student_id==student.id,Factor.credential_id==credential.get('id'),Factor.method=='passkey').with_for_update())
                 if not factor:raise ValueError()
                 stored=service['unseal']('auth_factor',factor.id,factor.ciphertext)
-                result=verify_authentication_response(credential=credential,expected_challenge=unb64(values['challenge']),expected_rp_id=RP_ID,expected_origin=ORIGIN,credential_public_key=unb64(stored['public_key']),credential_current_sign_count=factor.sign_count,require_user_verification=True)
+                if stored.get('rp_id',LEGACY_RP_ID)!=rp_id:raise ValueError()
+                result=verify_authentication_response(credential=credential,expected_challenge=unb64(values['challenge']),expected_rp_id=rp_id,expected_origin=origin,credential_public_key=unb64(stored['public_key']),credential_current_sign_count=factor.sign_count,require_user_verification=True)
                 user_handle=(credential.get('response') or {}).get('userHandle')
                 if user_handle and unb64(user_handle)!=student.id.encode():raise ValueError()
                 factor.sign_count=result.new_sign_count;record.consumed=True;row.mfa_at=now();row.expires_at=now()+timedelta(hours=4);audit('passkey_verified');db.session.commit()

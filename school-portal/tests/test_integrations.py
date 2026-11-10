@@ -151,7 +151,7 @@ def start(client,provider):
 def test_calendar_oauth_pkce_session_binding_single_use_and_encrypted_tokens(app,provider):
     manager,student=setup(app);calls=setup_oauth(app,manager,provider)
     args=start(student,provider);state=args['state'][0]
-    assert args['code_challenge_method']==['S256'] and args['redirect_uri']==['https://liontech-student-portal.vercel.app/connections/'+provider+'/callback']
+    assert args['code_challenge_method']==['S256'] and args['redirect_uri']==['https://www.liontechacademy.com/connections/'+provider+'/callback']
     other=app.test_client();register(other,'other-calendar@example.com')
     callback='/connections/'+provider+'/callback?state='+state+'&code=provider_code'
     assert other.get(callback).status_code==403

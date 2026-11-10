@@ -166,13 +166,13 @@ def passkey_registration(options,key,origin=ORIGIN,flags=0x45):
     public=key.public_key().public_numbers();cred_id=secrets.token_bytes(24)
     cose={1:2,3:-7,-1:1,-2:public.x.to_bytes(32,'big'),-3:public.y.to_bytes(32,'big')}
     client=json.dumps({'type':'webauthn.create','challenge':options['challenge'],'origin':origin}).encode()
-    auth=hashlib.sha256(RP_ID.encode()).digest()+bytes([flags])+struct.pack('>I',0)+b'\0'*16+struct.pack('>H',len(cred_id))+cred_id+cbor2.dumps(cose)
+    auth=hashlib.sha256((options.get('rp',{}).get('id') or options.get('rpId') or RP_ID).encode()).digest()+bytes([flags])+struct.pack('>I',0)+b'\0'*16+struct.pack('>H',len(cred_id))+cred_id+cbor2.dumps(cose)
     attestation=cbor2.dumps({'fmt':'none','attStmt':{},'authData':auth})
     return {'id':b64(cred_id),'rawId':b64(cred_id),'type':'public-key','response':{'clientDataJSON':b64(client),'attestationObject':b64(attestation)},'clientExtensionResults':{}}
 
 
 def passkey_authentication(options,key,credential_id,sid,origin=ORIGIN,flags=5):
-    client=json.dumps({'type':'webauthn.get','challenge':options['challenge'],'origin':origin}).encode();auth=hashlib.sha256(RP_ID.encode()).digest()+bytes([flags])+struct.pack('>I',1)
+    client=json.dumps({'type':'webauthn.get','challenge':options['challenge'],'origin':origin}).encode();auth=hashlib.sha256((options.get('rp',{}).get('id') or options.get('rpId') or RP_ID).encode()).digest()+bytes([flags])+struct.pack('>I',1)
     signature=key.sign(auth+hashlib.sha256(client).digest(),ec.ECDSA(hashes.SHA256()))
     return {'id':credential_id,'rawId':credential_id,'type':'public-key','response':{'clientDataJSON':b64(client),'authenticatorData':b64(auth),'signature':b64(signature),'userHandle':b64(sid.encode())},'clientExtensionResults':{}}
 
@@ -311,3 +311,29 @@ def test_auth_pages_do_not_leak_tokens_in_referrers_and_attempts_are_persistentl
     outsider=app.test_client()
     for _ in range(10):assert login(outsider,'not-an-account').status_code==200
     assert login(outsider,'not-an-account').status_code==429
+
+
+def test_domain_migration_keeps_old_passkeys_bound_to_original_host(app):
+    from providers import LEGACY_ORIGIN
+    manager,student=setup(app,False,False);register(student)
+    old=app.test_client();new=app.test_client()
+    def token(client,path,origin):
+        page=client.get(path,base_url=origin)
+        return re.search(rb'name="csrf" value="([^"]+)"',page.data)[1].decode()
+    def sign_in(client,origin):
+        return client.post('/student/login',base_url=origin,data={'csrf':token(client,'/student/login',origin),'identifier':'student@example.com','password':'student-password'})
+    sign_in(old,LEGACY_ORIGIN);csrf_value=token(old,'/account/security',LEGACY_ORIGIN)
+    options=old.post('/account/security/passkey/options',base_url=LEGACY_ORIGIN,data={'csrf':csrf_value,'mode':'register'}).json
+    assert options['rp']['id']==urlsplit(LEGACY_ORIGIN).hostname
+    credential=passkey_registration(options,ec.generate_private_key(ec.SECP256R1()),origin=LEGACY_ORIGIN)
+    assert old.post('/account/security/passkey/verify',base_url=LEGACY_ORIGIN,headers={'X-CSRF-Token':csrf_value},json={'mode':'register','credential':credential}).status_code==200
+    # Simulate the record format used before domain migration: no explicit RP field.
+    with app.app_context():
+        factor=db.session.scalar(select(AuthFactor));service=app.extensions['integrations'];stored=service['unseal']('auth_factor',factor.id,factor.ciphertext);stored.pop('rp_id');stored.pop('origin');factor.ciphertext=service['seal']('auth_factor',factor.id,stored);db.session.commit()
+    sign_in(new,ORIGIN);csrf_value=token(new,'/account/security/challenge',ORIGIN)
+    assert new.post('/account/security/passkey/options',base_url=ORIGIN,data={'csrf':csrf_value,'mode':'authenticate'}).status_code==400
+    csrf_value=token(old,'/account/security',LEGACY_ORIGIN)
+    result=old.post('/account/security/passkey/options',base_url=LEGACY_ORIGIN,data={'csrf':csrf_value,'mode':'authenticate'})
+    assert result.status_code==200 and result.json['rpId']==urlsplit(LEGACY_ORIGIN).hostname
+    hostile=app.test_client();sign_in(hostile,'https://untrusted.example');csrf_value=token(hostile,'/account/security/challenge','https://untrusted.example')
+    assert hostile.post('/account/security/passkey/options',base_url='https://untrusted.example',data={'csrf':csrf_value,'mode':'authenticate'}).status_code==400

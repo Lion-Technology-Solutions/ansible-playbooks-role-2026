@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
 from werkzeug.security import check_password_hash, generate_password_hash
 from vercel.blob import BlobError
+from providers import ORIGIN
 from file_storage import CHUNK_SIZE, FORM_LIMIT, PrivateBlobStorage, byte_range, validate_upload, validate_image
 from localization import COUNTRIES, LEGACY_COUNTRIES, COUNTRY_META, residence, formatted, converted, fetch_rates
 from experience import CURRENCIES, TIMEZONES, translated, money_value, installment_schedule, csv_safe
@@ -724,7 +725,7 @@ def auth_account_status(student):
 
 
 def account_whatsapp(student):
-    return whatsapp(f'LionTech account creation notification\nStudent number: {student.student_number}\nName: {student.name}\nEmail: {student.email}\nWhatsApp: {student.phone}\nCountry: {student.country}\nStudent type: {student.kind}\nAccount: {auth_account_status(student)}\nEnrollment: Requires payment confirmation\nReview: https://liontech-student-portal.vercel.app/admin#students')
+    return whatsapp(f'LionTech account creation notification\nStudent number: {student.student_number}\nName: {student.name}\nEmail: {student.email}\nWhatsApp: {student.phone}\nCountry: {student.country}\nStudent type: {student.kind}\nAccount: {auth_account_status(student)}\nEnrollment: Requires payment confirmation\nReview: {ORIGIN}/admin#students')
 
 
 def content_slug(value):
