@@ -3,6 +3,7 @@ import ast,hashlib,json,re
 from pathlib import Path
 from html import unescape
 from html.parser import HTMLParser
+from jinja2 import Environment,nodes
 from datetime import timedelta
 from flask import abort,g,jsonify,request,session
 from sqlalchemy import select,func,text
@@ -33,6 +34,7 @@ def static_sources(root):
     values=set(FR)|set(FR.values())
     for path in (Path(root)/'templates').glob('*.html'):
         source=path.read_text();parser=TextCollector();parser.feed(re.sub(r'{[{%#].*?[}%#]}','',source,flags=re.S));values.update(parser.values)
+        values.update(normalized(node.value) for node in Environment().parse(source).find_all(nodes.Const) if isinstance(node.value,str) and 2<len(node.value)<=2500)
         values.update(normalized(x) for x in re.findall(r"t\(['\"]([^'\"]+)['\"]\)",source))
     # Flash and validation messages can be dynamically rendered by Flask.
     for name in ('app.py','auth_security.py','global_portal.py','portal_assistant.py','legal_content.py'):
@@ -46,6 +48,9 @@ def install(app,db,m):
     sources=static_sources(app.root_path)
     french={**FR,**json.loads((Path(app.root_path)/'french_ui.json').read_text())}
     french.update({name:str(Locale('fr').territories.get(info['code'],name)) for name,info in COUNTRY_META.items() if info['code']})
+    for source,target in list(french.items()):
+        for suffix in (' →',' ↗',':'):
+            french.setdefault(source+suffix,target+suffix)
     reverse={v:k for k,v in french.items()}
     sources.update(french);sources.update(french.values())
     def allowed_sources():
