@@ -420,6 +420,14 @@ class ScheduledClass(db.Model):
     cohort=db.relationship('Cohort')
 
 
+class ClassWhatsAppPreference(db.Model):
+    __tablename__='portal_class_whatsapp_preferences'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    phone=db.Column(db.String(20),nullable=False)
+    enabled=db.Column(db.Boolean,default=False,nullable=False)
+    consented_at=db.Column(db.DateTime(timezone=True))
+
+
 class ClassDelivery(db.Model):
     __tablename__='portal_class_deliveries'
     id=db.Column(db.Integer,primary_key=True)
@@ -1524,7 +1532,7 @@ def create_app(config=None):
         lessons=db.session.scalars(select(Lesson).where(Lesson.course_id.in_(course_ids),Lesson.published.is_(True),Lesson.available_at<=now()).order_by(Lesson.course_id,Lesson.position,Lesson.id)).all()
         progress={e.course_id:(learning_progress(g.student.id,e.course_id) if e.course_id in course_ids else
             {'lessons':[],'completed':set(),'done':0,'total':0,'percent':0,'resume':None}) for e in enrollments}
-        upcoming=[item for item in classes if aware(item.starts_at)>=now()]
+        upcoming=[item for item in classes if app.extensions['global_experience']['class_state'](item) in ('upcoming','open','missing_link')]
         featured=paid[0] if paid else (enrollments[0] if enrollments else None)
         next_class=min(upcoming,key=lambda item:aware(item.starts_at)) if upcoming else None
         next_assignment=next((item for item in sorted(assessments,key=lambda item:aware(item.due_at) if item.due_at else now()+timedelta(days=3650)) if item.id not in submissions),None)
@@ -1535,6 +1543,16 @@ def create_app(config=None):
             courses=db.session.scalars(published_courses()).all(), cohorts=upcoming_cohorts(),
             classes=classes, recordings=recordings, announcements=announcements,
             assessments=assessments, submissions=submissions, notices=notices, registered=registered)
+
+    @app.get('/classes/<int:class_id>')
+    def class_access(class_id):
+        if not g.student:
+            session['next_class_id']=class_id
+            return redirect(url_for('login'))
+        lesson=db.get_or_404(ClassSession,class_id)
+        if not enrollment_for(lesson.course_id) or not app.extensions['global_experience']['class_visible'](lesson,g.student):abort(403)
+        if lesson.joining and lesson.joining.url and app.extensions['global_experience']['join_open'](lesson):return redirect(url_for('class_join',class_id=class_id))
+        return redirect(url_for('live_classes',_anchor='class-'+str(class_id)))
 
     @app.get('/class/<int:class_id>/join')
     @student_required()

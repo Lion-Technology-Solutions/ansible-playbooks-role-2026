@@ -289,11 +289,21 @@ def install(app,db,m,h):
         if not detail:return True  # Preserve legacy published meetings.
         return detail.published and aware(lesson.starts_at)-timedelta(minutes=detail.join_minutes)<=now()<=aware(lesson.starts_at)+timedelta(minutes=detail.duration)
 
+    def class_state(lesson):
+        detail=class_detail(lesson)
+        start=aware(lesson.starts_at)
+        end=start+timedelta(minutes=detail.duration if detail else 120)
+        opens=start-timedelta(minutes=detail.join_minutes if detail else 15)
+        if detail and not detail.published:return 'draft'
+        if now()>end:return 'ended'
+        if not lesson.joining or not lesson.joining.url:return 'missing_link'
+        return 'upcoming' if now()<opens else 'open'
+
     def calendar_text(lesson,student):
         detail=class_detail(lesson);revision=detail.revision if detail else 0
         def escape(value):return str(value).replace('\\','\\\\').replace('\n','\\n').replace(';','\\;').replace(',','\\,').replace('\r','')
         def stamp(value):return aware(value).astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-        lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//LionTech Academy//Student Portal//EN','CALSCALE:GREGORIAN','METHOD:REQUEST','BEGIN:VEVENT','UID:class-'+str(lesson.id)+'@liontechacademy.com','SEQUENCE:'+str(revision),'DTSTAMP:'+stamp(now()),'DTSTART:'+stamp(lesson.starts_at),'DTEND:'+stamp(aware(lesson.starts_at)+timedelta(minutes=detail.duration if detail else 120)),'SUMMARY:'+escape(lesson.title),'DESCRIPTION:'+escape(lesson.course.name+' — join securely through your student portal. Student number: '+student.student_number),'URL:'+ORIGIN+url_for('live_classes'),'ORGANIZER:mailto:'+(setting('SENDGRID_FROM_EMAIL') or 'liontechacademy@gmail.com'),'ATTENDEE;RSVP=TRUE:mailto:'+student.email,'STATUS:CONFIRMED','END:VEVENT','END:VCALENDAR']
+        lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//LionTech Academy//Student Portal//EN','CALSCALE:GREGORIAN','METHOD:REQUEST','BEGIN:VEVENT','UID:class-'+str(lesson.id)+'@liontechacademy.com','SEQUENCE:'+str(revision),'DTSTAMP:'+stamp(now()),'DTSTART:'+stamp(lesson.starts_at),'DTEND:'+stamp(aware(lesson.starts_at)+timedelta(minutes=detail.duration if detail else 120)),'SUMMARY:'+escape(lesson.title),'DESCRIPTION:'+escape(lesson.course.name+' — join securely through your student portal. Student number: '+student.student_number),'URL:'+ORIGIN+'/classes/'+str(lesson.id),'ORGANIZER:mailto:'+(setting('SENDGRID_FROM_EMAIL') or 'liontechacademy@gmail.com'),'ATTENDEE;RSVP=TRUE:mailto:'+student.email,'STATUS:CONFIRMED','END:VEVENT','END:VCALENDAR']
         # RFC 5545 lines fold at 75 UTF-8 octets, without splitting a code point.
         folded=[]
         for line in lines:
@@ -307,7 +317,8 @@ def install(app,db,m,h):
     def paid_for_class(student_id,lesson):
         enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==student_id,Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified'))
         detail=class_detail(lesson)
-        return bool(enrollment and (not detail or (detail.published and (not detail.cohort_id or detail.cohort_id==enrollment.cohort_id))))
+        control=db.session.get(M('StudentControl'),student_id)
+        return bool((not control or control.active) and enrollment and (not detail or (detail.published and (not detail.cohort_id or detail.cohort_id==enrollment.cohort_id))))
 
     @app.get('/live-classes')
     @student_required()
@@ -329,7 +340,9 @@ def install(app,db,m,h):
         query=select(Enrollment).where(Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified')
         if detail.cohort_id:query=query.where(Enrollment.cohort_id==detail.cohort_id)
         for enrollment in db.session.scalars(query):
-            notify(enrollment.student_id,'Class schedule updated',lesson.title+' — check Live Classes for the current time and calendar invitation.')
+            notify(enrollment.student_id,'Class schedule updated',lesson.title+' — '+aware(lesson.starts_at).strftime('%Y-%m-%d %H:%M UTC')+' — open Live Classes to view the schedule and join securely.')
+            consent=db.session.get(M('ClassWhatsAppPreference'),enrollment.student_id)
+            if consent and consent.enabled:app.extensions['notifications']['enqueue'](enrollment.student,'class_schedule',key=f'class-whatsapp:{lesson.id}:{detail.revision}:{enrollment.student_id}',channel='whatsapp',payload={'class_id':lesson.id,'revision':detail.revision})
             if not db.session.scalar(select(Delivery.id).where(Delivery.student_id==enrollment.student_id,Delivery.class_id==lesson.id,Delivery.revision==detail.revision)):
                 db.session.add(Delivery(student_id=enrollment.student_id,class_id=lesson.id,revision=detail.revision))
 
@@ -372,6 +385,7 @@ def install(app,db,m,h):
                 if not detail.meeting_id:
                     link=m['valid_url'](result.get('join_url',''));detail.meeting_id=str(result['id'])
                 else:link=lesson.joining.url if lesson.joining else link
+            if published and not link:raise ValueError('Add a Zoom joining URL or create a connected Zoom meeting before publishing.')
             lesson.course_id,lesson.title,lesson.starts_at,lesson.registration_url=cid,title,zoned.astimezone(timezone.utc),registration
             if not lesson.joining:lesson.joining=M('ClassJoinLink')(url=link)
             else:lesson.joining.url=link
@@ -408,4 +422,4 @@ def install(app,db,m,h):
     def global_context():
         return dict(card_payment_records=db.session.scalars(select(Checkout).order_by(Checkout.created_at.desc())).all() if session.get('admin') else [],global_invoices=db.session.scalars(select(Invoice).order_by(Invoice.created_at.desc())).all() if session.get('admin') else [],manual_fee_records=db.session.scalars(select(Manual).order_by(Manual.created_at.desc())).all() if session.get('admin') else [],global_prices={item.course_id:item for item in db.session.scalars(select(GlobalTuition))} if session.get('admin') else {})
 
-    return dict(local_money=local_money,formatted_money=formatted,residence=residence,global_fee_usd=Decimal('5.00'),calendar_text=calendar_text,class_local_time=lambda lesson:aware(lesson.starts_at).astimezone(ZoneInfo(class_detail(lesson).timezone if class_detail(lesson) else 'UTC')).strftime('%Y-%m-%dT%H:%M'),class_detail=class_detail,class_visible=class_visible,join_open=join_open)
+    return dict(local_money=local_money,formatted_money=formatted,residence=residence,global_fee_usd=Decimal('5.00'),calendar_text=calendar_text,class_local_time=lambda lesson:aware(lesson.starts_at).astimezone(ZoneInfo(class_detail(lesson).timezone if class_detail(lesson) else 'UTC')).strftime('%Y-%m-%dT%H:%M'),class_detail=class_detail,class_visible=class_visible,join_open=join_open,class_state=class_state)

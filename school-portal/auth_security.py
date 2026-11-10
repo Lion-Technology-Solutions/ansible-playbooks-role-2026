@@ -74,9 +74,11 @@ def install(app,db,m,h):
     def complete(row,token):
         student=db.get_or_404(Student,row.student_id)
         row.expires_at=now()+timedelta(hours=4)
+        next_class=session.get('next_class_id')
         session.clear();session.update(student_id=student.id,student_auth=stamp(student),auth_session=token);session.permanent=True
         enrollment=db.session.get(m['Enrollment'],row.next_enrollment_id) if row.next_enrollment_id else None
         destination=url_for('global_payment',enrollment_id=enrollment.id) if enrollment and enrollment.student_id==student.id else url_for('portal')
+        if isinstance(next_class,int) and next_class>0:destination=url_for('class_access',class_id=next_class)
         row.next_enrollment_id=None;audit('sign_in');db.session.commit();return redirect(destination)
     def advance(row,token):
         student=db.get_or_404(Student,row.student_id)
@@ -90,7 +92,9 @@ def install(app,db,m,h):
             session.clear();flash('This account is deactivated. Contact portal support.');return redirect(url_for('login'))
         p=profile(student);token=secrets.token_urlsafe(32)
         row=Login(digest=digest(token),student_id=student.id,stamp=stamp(student),version=p.security_version,expires_at=now()+timedelta(minutes=15),next_enrollment_id=next_enrollment)
+        next_class=session.get('next_class_id')
         db.session.add(row);db.session.commit();session.clear();session['pending_auth']=token;session['csrf']=secrets.token_hex(24)
+        if isinstance(next_class,int) and next_class>0:session['next_class_id']=next_class
         if send_verification and needs_email(student):
             try:send_verification_email(student,row)
             except Exception:flash('Your account was saved, but the verification email could not be sent. Try Resend code or contact support.')

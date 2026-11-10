@@ -243,10 +243,18 @@ def install(app,db,m,h):
     def connected_accounts():
         if request.method=='POST':
             pref=db.session.get(Preference,g.student.id) or Preference(student_id=g.student.id)
-            pref.reminders=request.form.get('reminders')=='yes';db.session.add(pref);db.session.commit();flash('Class reminder preference saved.')
+            pref.reminders=request.form.get('reminders')=='yes';db.session.add(pref)
+            alerts=db.session.get(m['ClassWhatsAppPreference'],g.student.id) or m['ClassWhatsAppPreference'](student_id=g.student.id,phone='')
+            enabled=request.form.get('whatsapp')=='yes'
+            phone=request.form.get('whatsapp_phone','').strip()
+            if enabled and not re.fullmatch(r'\+[1-9][0-9]{6,14}',phone):
+                db.session.rollback();flash('Enter your own WhatsApp number with country code, for example +14375550123.');return redirect(url_for('connected_accounts'))
+            alerts.enabled=enabled
+            if enabled:alerts.phone=phone;alerts.consented_at=now()
+            db.session.add(alerts);db.session.commit();flash('Class reminder preference saved.')
             return redirect(url_for('connected_accounts'))
         pref=db.session.get(Preference,g.student.id)
-        return render_template('connected_accounts.html',providers=[(provider,CATALOG[provider],connection_status(provider),ready(provider)) for provider in ('google','microsoft')],reminders=pref.reminders if pref else True)
+        return render_template('connected_accounts.html',providers=[(provider,CATALOG[provider],connection_status(provider),ready(provider)) for provider in ('google','microsoft')],reminders=pref.reminders if pref else True,whatsapp_pref=db.session.get(m['ClassWhatsAppPreference'],g.student.id))
 
     @app.post('/connections/<provider>/start')
     @student_required()
@@ -336,7 +344,7 @@ def install(app,db,m,h):
             link=db.session.get(Link,(student.id,provider,lesson.id))
             if link and link.generation==event_generation and link.revision==revision:continue
             start=aware(lesson.starts_at);end=start+timedelta(minutes=detail.duration if detail else 120)
-            description=lesson.course.name+' — join through '+ORIGIN+'/live-classes'
+            description=lesson.course.name+' — View class / Join: '+ORIGIN+'/classes/'+str(lesson.id)+' (student sign-in and eligible enrollment required)'
             stable=hashlib.sha256((student.id+provider+str(lesson.id)+event_generation).encode()).hexdigest()
             if provider=='google':
                 eid='lt'+stable;url='https://www.googleapis.com/calendar/v3/calendars/'+calendar+'/events'
@@ -411,7 +419,8 @@ def install(app,db,m,h):
         if not control or not control.automatic:return
         lesson=job.lesson;detail=db.session.get(Detail,lesson.id)
         enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==job.student_id,Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified'))
-        if not enrollment or (detail and (not detail.published or detail.revision!=job.revision or (detail.cohort_id and detail.cohort_id!=enrollment.cohort_id))):
+        student_control=db.session.get(m['StudentControl'],job.student_id)
+        if (student_control and not student_control.active) or not enrollment or (detail and (not detail.published or detail.revision!=job.revision or (detail.cohort_id and detail.cohort_id!=enrollment.cohort_id))):
             job.status='superseded';db.session.commit();return
         pref=db.session.get(Preference,job.student_id)
         if job.status!='sent' and ready('email') and (not pref or pref.reminders) and job.attempts<5:

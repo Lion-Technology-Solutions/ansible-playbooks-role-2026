@@ -127,11 +127,26 @@ def install(app,db,m,h):
                 transport('https://api.sendgrid.com/v3/mail/send','POST',{'personalizations':[{'to':[{'email':recipient}]}],'from':{'email':values['SENDGRID_FROM_EMAIL']},'subject':title,'content':[{'type':'text/plain','value':body}]},{'Authorization':'Bearer '+values['SENDGRID_API_KEY']})
             else:
                 values=service['config']('whatsapp')
-                if not service['ready']('whatsapp') or not re.fullmatch(r'HX[0-9a-fA-F]{32}',values.get('TWILIO_TEMPLATE_SID','')):
+                template=values.get('TWILIO_TEMPLATE_SID','');recipient='whatsapp:+14375756656'
+                variables={'1':student.student_number,'2':'New account ready for review','3':ORIGIN+'/admin/students/'+student.id+'/review'}
+                if row.kind=='class_schedule':
+                    consent=db.session.get(m['ClassWhatsAppPreference'],student.id)
+                    lesson=db.session.get(m['ClassSession'],row.payload.get('class_id'))
+                    detail=db.session.get(m['ScheduledClass'],lesson.id) if lesson else None
+                    enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==student.id,Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified')) if lesson else None
+                    control=db.session.get(Control,student.id)
+                    if not consent or not consent.enabled or not consent.consented_at or not enrollment or (control and not control.active) or not detail or not detail.published or detail.revision!=row.payload.get('revision') or (detail.cohort_id and detail.cohort_id!=enrollment.cohort_id) or aware(lesson.starts_at)+timedelta(minutes=detail.duration)<now():
+                        row.status='cancelled';db.session.commit();return
+                    if not re.fullmatch(r'\+[1-9][0-9]{6,14}',consent.phone):row.status='invalid_recipient';db.session.commit();return
+                    template=values.get('TWILIO_CLASS_TEMPLATE_SID','');recipient='whatsapp:'+consent.phone
+                    pref=db.session.get(m['StudentPreference'],student.id);zone=pref.timezone if pref else 'America/Toronto'
+                    local=aware(lesson.starts_at).astimezone(ZoneInfo(zone)).strftime('%Y-%m-%d %H:%M')+' '+zone
+                    variables={'1':student.student_number,'2':lesson.title.replace('\n',' ').replace('\r',' '),'3':local,'4':ORIGIN+'/classes/'+str(lesson.id)}
+                if not service['ready']('whatsapp') or not re.fullmatch(r'HX[0-9a-fA-F]{32}',template):
                     row.status='awaiting_whatsapp_template';db.session.commit();return
                 if not re.fullmatch(r'AC[0-9a-fA-F]{32}',values.get('TWILIO_ACCOUNT_SID','')) or not re.fullmatch(r'whatsapp:\+[1-9][0-9]{6,14}',values.get('TWILIO_WHATSAPP_FROM','')):raise ValueError()
-                link=ORIGIN+'/admin/students/'+student.id+'/review';credentials=base64.b64encode((values['TWILIO_ACCOUNT_SID']+':'+values['TWILIO_AUTH_TOKEN']).encode()).decode();row.attempts+=1
-                result=transport('https://api.twilio.com/2010-04-01/Accounts/'+quote(values['TWILIO_ACCOUNT_SID'],safe='')+'/Messages.json','POST',{'From':values['TWILIO_WHATSAPP_FROM'],'To':'whatsapp:+14375756656','ContentSid':values['TWILIO_TEMPLATE_SID'],'ContentVariables':json.dumps({'1':student.student_number,'2':'New account ready for review','3':link})},{'Authorization':'Basic '+credentials},True)
+                credentials=base64.b64encode((values['TWILIO_ACCOUNT_SID']+':'+values['TWILIO_AUTH_TOKEN']).encode()).decode();row.attempts+=1
+                result=transport('https://api.twilio.com/2010-04-01/Accounts/'+quote(values['TWILIO_ACCOUNT_SID'],safe='')+'/Messages.json','POST',{'From':values['TWILIO_WHATSAPP_FROM'],'To':recipient,'ContentSid':template,'ContentVariables':json.dumps(variables)},{'Authorization':'Basic '+credentials},True)
                 row.provider_id=str(result.get('sid',''))[:200]
             row.status='accepted';row.accepted_at=now();db.session.commit()
         except Exception:

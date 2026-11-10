@@ -49,8 +49,18 @@ def zoom_request(method,path,payload):
 
 
 def send_class_email(student,lesson,calendar):
+    from html import escape
+    from zoneinfo import ZoneInfo
+    from flask import current_app
+    from app import db,StudentPreference,ScheduledClass,aware
+    pref=db.session.get(StudentPreference,student.id);detail=db.session.get(ScheduledClass,lesson.id)
+    zone=pref.timezone if pref else 'America/Toronto'
+    local=aware(lesson.starts_at).astimezone(ZoneInfo(zone)).strftime('%B %d, %Y at %I:%M %p')+' · '+zone
+    link=ORIGIN+'/classes/'+str(lesson.id)
+    body=f'Hello {student.name},\nYour class schedule has been updated.\nClass: {lesson.title}\nProgram: {lesson.course.name}\nYour time: {local}\nDuration: {detail.duration if detail else 120} minutes\nStudent number: {student.student_number}\nView class / Join: {link}\nSign in with your student account. Joining opens {detail.join_minutes if detail else 15} minutes before class and closes at its scheduled end. Paid, approved enrollment is required.\nThe attached calendar invitation uses this same secure portal link.'
+    html='<p>'+escape(body).replace('\n','<br>')+'</p><p><a href="'+escape(link,quote=True)+'" style="display:inline-block;background:#0755db;color:white;padding:14px 24px;border-radius:8px;text-decoration:none">View class / Join</a></p>'
     data={'personalizations':[{'to':[{'email':student.email}]}],
           'from':{'email':setting('SENDGRID_FROM_EMAIL')},'subject':'LionTech class update: '+lesson.title,
-          'content':[{'type':'text/plain','value':f'Hello {student.name},\nYour {lesson.course.name} class schedule has been updated.\nStudent number: {student.student_number}\nOpen your portal for current class details: {ORIGIN}/live-classes\nThe attached calendar event can be added to your calendar.'}],
+          'content':[{'type':'text/plain','value':body},{'type':'text/html','value':html}],
           'attachments':[{'content':base64.b64encode(calendar.encode()).decode(),'type':'text/calendar; method=REQUEST','filename':'liontech-class.ics','disposition':'attachment'}]}
-    api('https://api.sendgrid.com/v3/mail/send','POST',data,{'Authorization':'Bearer '+setting('SENDGRID_API_KEY')})
+    return current_app.config.get('CLASS_HTTP',api)('https://api.sendgrid.com/v3/mail/send','POST',data,{'Authorization':'Bearer '+setting('SENDGRID_API_KEY')})
