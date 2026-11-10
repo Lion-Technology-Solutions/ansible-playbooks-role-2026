@@ -60,7 +60,7 @@ def test_incompatible_template_cannot_send_and_delivery_check_reads_only(app,mon
         assert row.status=='unsupported_whatsapp_template' and row.attempts==0 and not calls
         row.provider_id='SM'+'c'*32;row.status='accepted';db.session.commit()
     response=manager.post('/admin/notifications',data={'csrf':csrf(manager,'/admin/notifications'),'admin_password':'test-admin-password','action':'refresh_delivery'},follow_redirects=True)
-    assert response.status_code==200 and b'delivered' in response.data and b'Media items: 0' in response.data
+    assert response.status_code==200 and b'Delivered' in response.data and b'Media items: 0' in response.data
     assert len(calls)==1 and calls[0][0][0].endswith('/Messages/SM'+'c'*32+'.json') and 'method' not in calls[0][1]
 
 

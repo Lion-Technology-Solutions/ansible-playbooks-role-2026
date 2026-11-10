@@ -3,6 +3,7 @@ import base64,hmac,json,os,re,secrets
 from datetime import timedelta
 from decimal import Decimal
 from urllib.parse import quote
+from urllib.error import HTTPError
 from zoneinfo import ZoneInfo
 from flask import abort,current_app,flash,has_app_context,jsonify,redirect,render_template,request,session,url_for
 from sqlalchemy import event,inspect,select,text
@@ -237,28 +238,54 @@ def install(app,db,m,h):
         if not secret or not hmac.compare_digest(request.headers.get('Authorization',''),'Bearer '+secret):abort(401)
         return jsonify(reminders=due_reminders(),processed=drain(200))
 
+    def refresh_delivery(limit=20,force=False):
+        values=service['config']('whatsapp');result_counts={'checked':0,'failed':0,'missing':0}
+        if not service['ready']('whatsapp'):
+            for row in db.session.scalars(select(Event).where(Event.channel=='whatsapp',Event.status=='accepted').order_by(Event.created_at.desc()).limit(limit)):
+                row.payload={**row.payload,'delivery_status':'connection_check_required','delivery_lookup_note':'Open Integrations → WhatsApp and run Test connection before checking message delivery.'}
+            db.session.commit();return result_counts
+        credentials=base64.b64encode((values['TWILIO_ACCOUNT_SID']+':'+values['TWILIO_AUTH_TOKEN']).encode()).decode()
+        rows=list(db.session.scalars(select(Event).where(Event.channel=='whatsapp',Event.status=='accepted').order_by(Event.created_at.desc()).limit(limit)))
+        for row in rows:
+            checked_at=row.payload.get('delivery_checked_at')
+            if checked_at and not force:
+                try:
+                    if (now()-aware(m['datetime'].fromisoformat(checked_at))).total_seconds()<120:continue
+                except (ValueError,TypeError):pass
+            payload={**row.payload,'delivery_checked_at':now().isoformat()}
+            # Twilio Message resources support both SMS and multimedia SID prefixes.
+            if not re.fullmatch(r'(?:SM|MM)[0-9a-fA-F]{32}',row.provider_id or ''):
+                row.payload={**payload,'delivery_status':'reference_unavailable','delivery_lookup_note':'No valid Twilio message reference was saved. Review the matching message in Twilio Messaging Logs.'}
+                result_counts['missing']+=1;continue
+            try:
+                result=app.config.get('LIFECYCLE_HTTP',api)('https://api.twilio.com/2010-04-01/Accounts/'+quote(values['TWILIO_ACCOUNT_SID'],safe='')+'/Messages/'+row.provider_id+'.json',headers={'Authorization':'Basic '+credentials})
+                status=result.get('status','unknown')
+                if status not in ('queued','sending','sent','delivered','read','undelivered','failed','accepted','scheduled','canceled'):status='unknown'
+                count=str(result.get('num_media','unknown'))
+                row.payload={**payload,'delivery_status':status,'media_count':count if count.isdigit() and len(count)<5 else 'unknown','provider_error_code':str(result.get('error_code') or '')[:12],'delivery_lookup_note':'','delivery_lookup_http':None}
+                result_counts['checked']+=1
+            except HTTPError as error:
+                note={401:'Twilio rejected authentication. Check the saved Account SID and Auth Token.',403:'Twilio denied message-log access. Check account permissions.',404:'Twilio could not find this message under the configured account.'}.get(error.code,'Twilio could not return the message status. Retry or check Twilio Messaging Logs.')
+                row.payload={**payload,'delivery_status':'lookup_failed','delivery_lookup_http':error.code,'delivery_lookup_note':note};result_counts['failed']+=1
+            except Exception:
+                row.payload={**payload,'delivery_status':'lookup_failed','delivery_lookup_note':'The delivery lookup could not reach Twilio. Retry the status check.'};result_counts['failed']+=1
+        db.session.commit();return result_counts
+
     @app.route('/admin/notifications',methods=['GET','POST'])
     @h['admin_required']
     def notification_admin():
         if request.method=='POST':
             service['reauthenticate']()
             if request.form.get('action')=='refresh_delivery':
-                values=service['config']('whatsapp');checked=0
-                if not service['ready']('whatsapp'):flash('Configure and test the WhatsApp connection first.')
+                if not service['ready']('whatsapp'):
+                    refresh_delivery(limit=1);flash('Configure and test the WhatsApp connection first.')
                 else:
-                    credentials=base64.b64encode((values['TWILIO_ACCOUNT_SID']+':'+values['TWILIO_AUTH_TOKEN']).encode()).decode()
-                    for row in db.session.scalars(select(Event).where(Event.channel=='whatsapp',Event.provider_id.is_not(None)).order_by(Event.created_at.desc()).limit(20)):
-                        if not re.fullmatch(r'SM[0-9a-fA-F]{32}',row.provider_id or ''):continue
-                        try:
-                            result=app.config.get('LIFECYCLE_HTTP',api)('https://api.twilio.com/2010-04-01/Accounts/'+quote(values['TWILIO_ACCOUNT_SID'],safe='')+'/Messages/'+row.provider_id+'.json',headers={'Authorization':'Basic '+credentials})
-                            status=result.get('status','unknown')
-                            if status not in ('queued','sending','sent','delivered','read','undelivered','failed','accepted','scheduled','canceled'):status='unknown'
-                            count=str(result.get('num_media','0'))
-                            row.payload={**row.payload,'delivery_status':status,'media_count':count if count.isdigit() and len(count)<5 else 'unknown','provider_error_code':str(result.get('error_code') or '')[:12]}
-                            checked+=1
-                        except Exception:app.logger.warning('WhatsApp delivery status could not be refreshed.')
-                    db.session.commit();flash(f'Checked {checked} WhatsApp delivery record(s). CRM display support is separate from provider delivery.')
+                    counts=refresh_delivery(force=True)
+                    flash(f"Delivery check complete: {counts['checked']} retrieved, {counts['failed']} failed, {counts['missing']} missing a message reference. Details appear in the table below.")
             else:due_reminders();drain(50);flash('Notifications processed. Check the delivery status for each message.')
+        elif not app.testing or app.config.get('AUTO_CHECK_WHATSAPP_DELIVERY'):
+            # One recent message per page view; cache for two minutes. This never sends messages.
+            refresh_delivery(limit=1)
         return render_template('notification_admin.html',admin_view='notifications',events=db.session.scalars(select(Event).order_by(Event.created_at.desc()).limit(100)).all(),email_ready=service['ready']('email'),whatsapp_ready=service['ready']('whatsapp') and bool(re.fullmatch(r'HX[0-9a-fA-F]{32}',service['config']('whatsapp').get('TWILIO_TEMPLATE_SID',''))))
 
     @app.route('/admin/students/<student_id>/review',methods=['GET','POST'])
