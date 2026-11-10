@@ -56,7 +56,7 @@ def enroll_totp(app,client):
 
 def test_activation_code_is_bound_limited_and_preserves_account_number_and_payment_gate(app):
     manager,student=setup(app);response=register(student)
-    assert b'Check your email' in response.data
+    assert b'Verify your email address' in response.data
     assert student.get('/portal').status_code==302 and student.get('/live-classes').status_code==302
     with app.app_context():
         s=db.session.scalar(select(Student));sid=s.id;number=s.student_number
@@ -233,7 +233,7 @@ def test_facebook_new_account_requires_independent_email_verification(app):
     assert b'Read and acknowledge the current' in denied.data
     with app.app_context():assert not db.session.scalar(select(Student))
     page=student.post('/auth/complete',data={'csrf':csrf(student,'/auth/complete'),'policy_acknowledged':'yes','policy_version':__import__('legal_content').POLICY_VERSION,'name':'New user','email':'new@example.com','username':'new-social','country':'Canada','phone':'+14375551234'},follow_redirects=True)
-    assert b'Check your email' in page.data and student.get('/portal').status_code==302
+    assert b'Verify your email address' in page.data and student.get('/portal').status_code==302
     activate(app,student)
     assert student.get('/portal').status_code==200
 
@@ -301,7 +301,7 @@ def test_legacy_accounts_have_a_visible_migration_deadline_and_then_the_same_gat
     logout(student);page=login(student);assert b'Existing-account transition deadline' in page.data
     assert student.get('/portal').status_code==200
     with app.app_context():p=db.session.get(AuthProfile,sid);assert not p.email_verified_at;p.email_grace_until=now()-timedelta(seconds=1);db.session.commit()
-    assert b'Check your email' in student.get('/portal',follow_redirects=True).data
+    assert b'Verify your email address' in student.get('/portal',follow_redirects=True).data
 
 
 def test_auth_pages_do_not_leak_tokens_in_referrers_and_attempts_are_persistently_limited(app):
@@ -356,7 +356,7 @@ def test_security_email_direct_handoff_does_not_wait_for_queue(app,monkeypatch):
     app.config['AUTH_HTTP']=lambda *a,**k:calls.append(a) or {}
     monkeypatch.setattr('integration_jobs.publish',lambda payload:(_ for _ in ()).throw(AssertionError('No queue on successful direct handoff')))
     response=register(student)
-    assert b'Email accepted by the provider' in response.data and len(calls)==1
+    assert b'Your verification email has been submitted for delivery' in response.data and len(calls)==1
     with app.app_context():
         row=db.session.scalar(select(AuthMail));assert row.status=='sent' and row.attempts==1 and row.ciphertext==''
     code=re.search(r'code is (\d{6})',calls[0][2]['content'][0]['value'])[1]
@@ -369,7 +369,7 @@ def test_security_email_failed_direct_handoff_queues_retry(app,monkeypatch):
     app.config['AUTH_HTTP']=lambda *a,**k:(_ for _ in ()).throw(TimeoutError())
     monkeypatch.setattr('integration_jobs.publish',lambda payload:queued.append(payload))
     response=register(student)
-    assert b'Email delivery is delayed' in response.data and len(queued)==1
+    assert b'Your verification email is delayed' in response.data and len(queued)==1
     assert set(queued[0])=={'kind','id','run'}
     with app.app_context():
         row=db.session.scalar(select(AuthMail));assert row.status=='retry_queued' and row.attempts==1 and row.ciphertext

@@ -126,7 +126,7 @@ def install(app,db,m,h):
             basic=base64.b64encode((values['TWILIO_ACCOUNT_SID']+':'+values['TWILIO_AUTH_TOKEN']).encode()).decode()
             result=transport('https://api.twilio.com/2010-04-01/Accounts/'+quote(values['TWILIO_ACCOUNT_SID'],safe='')+'.json',headers={'Authorization':'Basic '+basic})
             if result.get('sid')!=values['TWILIO_ACCOUNT_SID'] or result.get('status')!='active':raise ValueError('An active Twilio account could not be verified.')
-            return 'connected','Twilio account verified. WhatsApp sender/template approval and messaging automation are separate.'
+            return 'connected','Twilio account verified. Portal alerts require an approved Text-only template. Check Notifications for message delivery status.'
         if provider=='facebook':
             result=transport('https://graph.facebook.com/v23.0/oauth/access_token','POST',{'client_id':values['FACEBOOK_APP_ID'],'client_secret':values['FACEBOOK_APP_SECRET'],'grant_type':'client_credentials'},form=True)
             if not result.get('access_token'):raise ValueError('Meta did not verify the application.')

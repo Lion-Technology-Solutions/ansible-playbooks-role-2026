@@ -9,6 +9,7 @@ from sqlalchemy import event,inspect,select,text
 from sqlalchemy.orm import Session
 from providers import ORIGIN,api
 from experience import installment_schedule
+from whatsapp_templates import validate as validate_template,TemplateError
 
 
 @event.listens_for(Session,'before_flush')
@@ -72,7 +73,9 @@ def install(app,db,m,h):
         if 'student_management' in app.extensions:app.extensions['student_management']['guard'](session_)
         for row in list(session_.new)+list(session_.dirty):
             state=inspect(row)
-            if isinstance(row,Student) and state.pending:enqueue(row,'account_created',channel='whatsapp',session_=session_)
+            if isinstance(row,Student) and state.pending:
+                enqueue(row,'account_created',channel='whatsapp',session_=session_)
+                enqueue(row,'support_account_created',channel='email',session_=session_)
             elif isinstance(row,Control):
                 student=session_.get(Student,row.student_id)
                 if student and state.attrs.active.history.has_changes() and (row.active is False or False in state.attrs.active.history.deleted):enqueue(student,'account_deactivated' if row.active is False else 'account_restored',payload={'reason':row.reason or ''},session_=session_)
@@ -90,6 +93,9 @@ def install(app,db,m,h):
                     if row.status=='approved':enqueue(student,'enrollment_approved',payload=payload,session_=session_)
                     elif row.status in ('revoked','rejected') and ('approved' in state.attrs.status.history.deleted or row.status=='revoked'):enqueue(student,'access_revoked',payload=payload,session_=session_)
     def message(event):
+        if event.kind=='support_account_created':
+            student=event.student
+            return 'New student account — LionTech review required',('A student account has been created.\nStudent: '+student.name+'\nStudent number: '+student.student_number+'\nReview the account and enrollment: '+ORIGIN+'/admin/students/'+student.id+'/review'+'\nAdministrator sign-in is required. Account creation does not confirm payment or grant class access.')
         if event.kind=='admin_message':return event.payload['subject'],event.payload['body']+'\n\nStudent number: '+event.student.student_number+'\n'+ORIGIN+'/enrollments'
         if event.kind=='tuition_status':
             status=event.payload.get('status','pending');course=event.payload.get('course','');reason=event.payload.get('reason','')
@@ -140,6 +146,9 @@ def install(app,db,m,h):
             if row.channel=='email':
                 if not service['ready']('email'):row.status='awaiting_email';db.session.commit();return
                 values=service['config']('email');title,body=message(row);recipient=row.payload.get('recipient') or student.email
+                if row.kind=='support_account_created':
+                    administrator=db.session.get(m['AdminAccount'],1)
+                    recipient=administrator.email if administrator else app.config.get('SCHOOL_ADMIN_EMAIL') or os.environ.get('SCHOOL_ADMIN_EMAIL') or 'liontechacademy@gmail.com'
                 row.attempts+=1
                 transport('https://api.sendgrid.com/v3/mail/send','POST',{'personalizations':[{'to':[{'email':recipient}]}],'from':{'email':values['SENDGRID_FROM_EMAIL']},'subject':title,'content':[{'type':'text/plain','value':body}]},{'Authorization':'Bearer '+values['SENDGRID_API_KEY']})
             else:
@@ -169,6 +178,12 @@ def install(app,db,m,h):
                 if not service['ready']('whatsapp') or not re.fullmatch(r'HX[0-9a-fA-F]{32}',template):
                     row.status='awaiting_whatsapp_template';db.session.commit();return
                 if not re.fullmatch(r'AC[0-9a-fA-F]{32}',values.get('TWILIO_ACCOUNT_SID','')) or not re.fullmatch(r'whatsapp:\+[1-9][0-9]{6,14}',values.get('TWILIO_WHATSAPP_FROM','')):raise ValueError()
+                try:
+                    check=app.config.get('WHATSAPP_TEMPLATE_VALIDATOR',validate_template)
+                    metadata=check(values,template,variables)
+                    row.payload={**row.payload,'template_type':metadata.get('type','twilio/text')}
+                except TemplateError as error:
+                    row.status=error.status;db.session.commit();return
                 credentials=base64.b64encode((values['TWILIO_ACCOUNT_SID']+':'+values['TWILIO_AUTH_TOKEN']).encode()).decode();row.attempts+=1
                 result=transport('https://api.twilio.com/2010-04-01/Accounts/'+quote(values['TWILIO_ACCOUNT_SID'],safe='')+'/Messages.json','POST',{'From':values['TWILIO_WHATSAPP_FROM'],'To':recipient,'ContentSid':template,'ContentVariables':json.dumps(variables)},{'Authorization':'Basic '+credentials},True)
                 row.provider_id=str(result.get('sid',''))[:200]
@@ -210,7 +225,7 @@ def install(app,db,m,h):
             enqueue(student,'payment_due',key,dict(enrollment_id=enrollment.id,course=enrollment.course.name,due=due.isoformat(),amount=str(invoice.amount_usd)+' USD',fee=True));count+=1
         db.session.commit();return count
     def drain(limit=100):
-        identities=list(db.session.scalars(select(Event.id).where(Event.status.in_(['pending','failed','awaiting_email','awaiting_whatsapp_template','awaiting_student_consent']),Event.attempts<5).order_by(Event.created_at).limit(limit)))
+        identities=list(db.session.scalars(select(Event.id).where(Event.status.in_(['pending','failed','awaiting_email','awaiting_whatsapp_template','awaiting_student_consent','unsupported_whatsapp_template','template_fields_mismatch','template_approval_pending']),Event.attempts<5).order_by(Event.created_at).limit(limit)))
         for identity in identities:
             try:process(identity)
             except RuntimeError:pass
@@ -225,7 +240,25 @@ def install(app,db,m,h):
     @app.route('/admin/notifications',methods=['GET','POST'])
     @h['admin_required']
     def notification_admin():
-        if request.method=='POST':service['reauthenticate']();due_reminders();drain(50);flash('Processing completed. Provider acceptance does not guarantee inbox delivery.')
+        if request.method=='POST':
+            service['reauthenticate']()
+            if request.form.get('action')=='refresh_delivery':
+                values=service['config']('whatsapp');checked=0
+                if not service['ready']('whatsapp'):flash('Configure and test the WhatsApp connection first.')
+                else:
+                    credentials=base64.b64encode((values['TWILIO_ACCOUNT_SID']+':'+values['TWILIO_AUTH_TOKEN']).encode()).decode()
+                    for row in db.session.scalars(select(Event).where(Event.channel=='whatsapp',Event.provider_id.is_not(None)).order_by(Event.created_at.desc()).limit(20)):
+                        if not re.fullmatch(r'SM[0-9a-fA-F]{32}',row.provider_id or ''):continue
+                        try:
+                            result=app.config.get('LIFECYCLE_HTTP',api)('https://api.twilio.com/2010-04-01/Accounts/'+quote(values['TWILIO_ACCOUNT_SID'],safe='')+'/Messages/'+row.provider_id+'.json',headers={'Authorization':'Basic '+credentials})
+                            status=result.get('status','unknown')
+                            if status not in ('queued','sending','sent','delivered','read','undelivered','failed','accepted','scheduled','canceled'):status='unknown'
+                            count=str(result.get('num_media','0'))
+                            row.payload={**row.payload,'delivery_status':status,'media_count':count if count.isdigit() and len(count)<5 else 'unknown','provider_error_code':str(result.get('error_code') or '')[:12]}
+                            checked+=1
+                        except Exception:app.logger.warning('WhatsApp delivery status could not be refreshed.')
+                    db.session.commit();flash(f'Checked {checked} WhatsApp delivery record(s). CRM display support is separate from provider delivery.')
+            else:due_reminders();drain(50);flash('Notifications processed. Check the delivery status for each message.')
         return render_template('notification_admin.html',admin_view='notifications',events=db.session.scalars(select(Event).order_by(Event.created_at.desc()).limit(100)).all(),email_ready=service['ready']('email'),whatsapp_ready=service['ready']('whatsapp') and bool(re.fullmatch(r'HX[0-9a-fA-F]{32}',service['config']('whatsapp').get('TWILIO_TEMPLATE_SID',''))))
 
     @app.route('/admin/students/<student_id>/review',methods=['GET','POST'])

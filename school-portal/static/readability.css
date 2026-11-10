@@ -1,0 +1,42 @@
+/* Shared reading and interaction standards; loaded after component themes. */
+:root{font-size:17px;--ink:#142142;--muted:#4d5c74}
+:root[data-reading-size="large"]{font-size:19px}
+body{line-height:1.65;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+h1,h2,h3,h4,.dashboard-layout h1{letter-spacing:-.015em;line-height:1.25}
+p,li{line-height:1.65}
+a{color:#1249b4;text-underline-offset:.2em}
+a:hover{text-decoration:underline}
+label,.journey-card label,.integration-setup-grid label{font-size:1rem;line-height:1.5;font-weight:650}
+input,select,textarea{font-size:1rem;color:#142142;background:#fff;border-color:#8d9ab0;min-height:48px}
+input::placeholder,textarea::placeholder{color:#53617a;opacity:1}
+input[type=checkbox],input[type=radio]{min-height:0;width:20px;height:20px;flex:0 0 auto;accent-color:#094ee8}
+.button,button.button,.button.compact{font-size:1rem;min-height:46px;line-height:1.4;padding:12px 18px;white-space:normal}
+.text-button,.text-button.dark{color:#1646a0;font-size:1rem;min-height:44px;padding:10px 8px;text-decoration:underline;text-underline-offset:.2em}
+header .text-button,.dashboard-sidebar .text-button,.auth-story .text-button,.hero .text-button,.support-banner .text-button{color:#fff}
+button:disabled,.button:disabled{opacity:1;background:#e8ecf3;color:#53617a;border-color:#b7c2d3;cursor:not-allowed}
+.muted,label small,.record p,.student-cell small,.metric-card small,.next-class-card small,.curriculum-track small,.integration-card>small,.journey-card .muted{font-size:.875rem;color:#4d5c74;line-height:1.6}
+small{font-size:.875rem;line-height:1.5}
+.pill{font-size:.875rem!important;letter-spacing:normal;line-height:1.5;white-space:normal}
+.pill-yellow{color:#584100!important;background:#fff2a6!important}
+.pill-green{color:#07532b!important;background:#dff8e9!important}
+.eyebrow{font-size:.825rem;letter-spacing:.07em;font-weight:700;line-height:1.5}
+.header-inner nav a,.dashboard-sidebar nav a{font-size:1rem;line-height:1.4}
+.dashboard-layout td,.dashboard-layout th{font-size:.95rem;line-height:1.55;padding-top:16px;padding-bottom:16px}
+.dashboard-layout .student-cell small{font-size:.875rem;color:#4d5c74}
+.dashboard-layout .metric-card small{font-size:.825rem;color:#4d5c74}
+.dashboard-layout .dash-card,.panel{overflow-wrap:break-word}
+.record{align-items:flex-start}.record>div{min-width:0}
+.otp-input{font-size:1.65rem;font-weight:650;letter-spacing:.2em;color:#142142;min-height:64px}
+.security-panel{max-width:680px}.security-panel>p{max-width:65ch}
+.security-panel .text-button{color:#1646a0;font-size:1rem}
+.security-help{margin:16px 0 24px;color:#4d5c74}
+.reading-toolbar{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin:0 0 20px;color:#35445f;font-size:.875rem}
+.reading-toolbar button{border:1px solid #8d9ab0;border-radius:8px;color:#173f8c;background:#fff;min-height:44px;padding:8px 12px;font-size:.9rem;cursor:pointer}
+.reading-toolbar button[aria-pressed=true]{background:#eaf1ff;color:#092b76;border:2px solid #194da8;font-weight:700}
+.student-admin-actions{display:flex;flex-direction:column;align-items:flex-start;gap:10px;min-width:190px}
+.student-admin-actions form{min-width:230px;max-width:360px;padding:12px 0}
+.notice{color:#142142;line-height:1.65}
+.integration-status{font-size:.875rem;line-height:1.5;white-space:normal}
+@media(max-width:900px){.dashboard-topbar{height:auto;min-height:76px;padding-top:10px;padding-bottom:10px;flex-wrap:wrap}.dashboard-topbar .preference-controls{flex-wrap:wrap}.dashboard-sidebar nav a{font-size:1rem}.dashboard-sidebar{overflow-y:auto}}
+@media(max-width:620px){:root{font-size:17px}.reading-toolbar{justify-content:flex-start;gap:6px}.dashboard-layout main{padding-left:16px;padding-right:16px}.dashboard-layout h1{font-size:1.9rem}.button,.button.compact{padding:12px 14px}.mobile-bottom-nav a{font-size:.825rem;line-height:1.4}.mobile-bottom-nav{min-height:76px}.metric-grid{grid-template-columns:1fr}.journey-card-body{padding:20px}.record{flex-wrap:wrap}.table-scroll{max-width:100%;overflow-x:auto}.security-panel{padding:24px 20px}.reading-toolbar button{padding:8px 10px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
