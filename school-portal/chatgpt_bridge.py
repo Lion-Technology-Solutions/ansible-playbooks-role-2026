@@ -11,7 +11,7 @@ from providers import ORIGIN
 def install(app,db,m,h):
     Key,Draft,Attempt=m['PortalAccessKey'],m['AssistantDraft'],m['LoginAttempt']
     now,aware=m['now'],m['aware'];assistant=app.extensions['assistant']
-    def stamp():return hmac.new(app.secret_key.encode(),app.config['ADMIN_PASSWORD'].encode(),'sha256').hexdigest()
+    def stamp():return app.extensions['admin_security']['stamp']()
     def owner(key):return hmac.new(app.secret_key.encode(),key.id.encode(),'sha256').hexdigest()
     def authenticated(write=False):
         def decorate(fn):
@@ -99,7 +99,9 @@ def install(app,db,m,h):
         # No arbitrary endpoint, identity change, payment approval or credential tool is exposed.
         with app.test_request_context(endpoint,method='POST',data=payload):
             session.update(admin=True,admin_auth=stamp(),csrf=token,assistant_owner=key.id)
-            response=app.full_dispatch_request()
+            previous=getattr(g,'portal_internal_delegation',False);g.portal_internal_delegation=True
+            try:response=app.full_dispatch_request()
+            finally:g.portal_internal_delegation=previous
             messages=[message for _,message in session.get('_flashes',[])]
         db.session.expire_all();current=db.session.get(Draft,draft_id)
         if current and current.status=='applied':

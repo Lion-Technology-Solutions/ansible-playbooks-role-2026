@@ -87,6 +87,47 @@ class AuthPolicy(db.Model):
     revision=db.Column(db.Integer,nullable=False,default=1)
 
 
+class StudentControl(db.Model):
+    __tablename__='portal_student_controls'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    active=db.Column(db.Boolean,nullable=False,default=True)
+    revision=db.Column(db.Integer,nullable=False,default=0)
+    reason=db.Column(db.String(500),nullable=False,default='')
+    reviewed_at=db.Column(db.DateTime(timezone=True))
+
+
+class ProfilePicture(db.Model):
+    __tablename__='portal_profile_pictures'
+    owner=db.Column(db.String(50),primary_key=True)
+    pathname=db.Column(db.Text,nullable=False)
+    updated_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+
+
+class AdminAccount(db.Model):
+    __tablename__='portal_admin_account'
+    id=db.Column(db.Integer,primary_key=True,default=1)
+    name=db.Column(db.String(100),nullable=False,default='LionTech Administrator')
+    email=db.Column(db.String(254),nullable=False)
+    password_hash=db.Column(db.Text)
+    security_version=db.Column(db.Integer,nullable=False,default=1)
+
+
+class LifecycleEvent(db.Model):
+    __tablename__='portal_lifecycle_events'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    event_key=db.Column(db.String(180),unique=True,nullable=False)
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),nullable=False,index=True)
+    kind=db.Column(db.String(40),nullable=False)
+    channel=db.Column(db.String(15),nullable=False,default='email')
+    payload=db.Column(db.JSON,nullable=False,default=dict)
+    status=db.Column(db.String(30),nullable=False,default='pending')
+    attempts=db.Column(db.Integer,nullable=False,default=0)
+    provider_id=db.Column(db.String(200))
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+    accepted_at=db.Column(db.DateTime(timezone=True))
+    student=db.relationship('Student')
+
+
 class PortalAccessKey(db.Model):
     __tablename__='portal_access_keys'
     id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
@@ -869,16 +910,21 @@ def create_app(config=None):
         g.student = None
         student = db.session.get(Student, session.get('student_id')) if session.get('student_id') else None
         if student:
+            control=db.session.get(StudentControl,student.id)
+            if control and not control.active:session.clear();student=None
+        if student:
             token = hmac.new(app.secret_key.encode(), student.password_hash.encode(), 'sha256').hexdigest()
             if hmac.compare_digest(token.encode(), session.get('student_auth', '').encode()):
                 g.student = student
             else:
                 session.clear()
         if session.get('admin'):
-            admin_token = hmac.new(app.secret_key.encode(), app.config['ADMIN_PASSWORD'].encode(), 'sha256').hexdigest()
+            admin_token = app.extensions['admin_security']['stamp']()
             if not hmac.compare_digest(admin_token.encode(), session.get('admin_auth', '').encode()):
                 session.clear()
         if request.method == 'POST' and request.endpoint not in ('stripe_webhook','chatgpt_context','chatgpt_draft','chatgpt_apply'):
+            if request.endpoint in ('student_profile','admin_profile'):
+                request.max_content_length=2*1024*1024+16384
             if request.endpoint == 'manual_fee':
                 request.max_content_length = 2*1024*1024+8192
             if request.endpoint == 'asset_chunk':
@@ -913,7 +959,7 @@ def create_app(config=None):
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings') and bool(g.student or session.get('admin')))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
 
     def student_required():
         def decorate(fn):
@@ -1388,10 +1434,10 @@ def create_app(config=None):
                 flash('Too many sign-in attempts. Try again in 15 minutes.')
                 return render_template('login.html', admin=True), 429
             password = request.form.get('password', '')
-            if hmac.compare_digest(request.form.get('username', '').encode(), b'admin') and hmac.compare_digest(password.encode(), app.config['ADMIN_PASSWORD'].encode()):
+            if hmac.compare_digest(request.form.get('username', '').encode(), b'admin') and app.extensions['admin_security']['check'](password):
                 session.clear()
                 session['admin'] = True
-                session['admin_auth'] = hmac.new(app.secret_key.encode(), app.config['ADMIN_PASSWORD'].encode(), 'sha256').hexdigest()
+                session['admin_auth'] = app.extensions['admin_security']['stamp']()
                 session.permanent = True
                 return redirect(url_for('admin'))
             failed_login(key)
@@ -1827,6 +1873,10 @@ def create_app(config=None):
     app.extensions['assistant']=install_assistant(app,db,globals(),dict(admin_required=admin_required,student_required=student_required))
     from auth_security import install as install_security
     app.extensions['auth_security']=install_security(app,db,globals(),dict(admin_required=admin_required))
+    from account_security import install as install_account_security
+    app.extensions['admin_security']=install_account_security(app,db,globals(),dict(admin_required=admin_required,student_required=student_required))
+    from lifecycle_notifications import install as install_notifications
+    app.extensions['notifications']=install_notifications(app,db,globals(),dict(admin_required=admin_required,confirm_enrollment=confirm_enrollment))
     from chatgpt_bridge import install as install_bridge
     app.extensions['chatgpt_bridge']=install_bridge(app,db,globals(),dict(admin_required=admin_required))
     from portal_languages import install as install_languages

@@ -1,5 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "flask",
-  "regions": ["iad1"]
+  "regions": [
+    "iad1"
+  ],
+  "crons": [
+    {
+      "path": "/internal/notifications/daily",
+      "schedule": "0 13 * * *"
+    }
+  ]
 }

@@ -39,7 +39,7 @@ CATALOG={
   'https://app.sendgrid.com/settings/api_keys','Authenticate your sending domain or verify the sender in SendGrid. The API key needs Mail Send; connection validation reads its available scopes.','Existing class-update email delivery queue'),
  'whatsapp':provider('WhatsApp Business','communication','W','Configure Twilio WhatsApp credentials.',[
   field('TWILIO_ACCOUNT_SID','Twilio account SID',False),field('TWILIO_AUTH_TOKEN','Twilio auth token'),field('TWILIO_WHATSAPP_FROM','WhatsApp sender',False,True,'Example format: whatsapp:+19152219465'),field('TWILIO_TEMPLATE_SID','Approved message template SID',False,False)],
-  'https://console.twilio.com','Register an approved WhatsApp sender and templates in Twilio. Account validation does not prove sender/template approval or recipient consent.','Account validation; automated WhatsApp messaging and OTP not enabled'),
+  'https://console.twilio.com','Register an approved WhatsApp sender and templates in Twilio. Account validation does not prove sender/template approval or recipient consent.','Account validation and approved-template support review notifications; student WhatsApp OTP is separate'),
  'facebook':provider('Facebook','social','f','Configure your Meta application and Page access.',[
   field('FACEBOOK_APP_ID','Meta app ID',False),field('FACEBOOK_APP_SECRET','Meta app secret'),field('FACEBOOK_PAGE_ID','Facebook Page ID',False,False),field('FACEBOOK_PAGE_TOKEN','Page access token',True,False)],
   'https://developers.facebook.com/apps','Create a Meta app. Page tools require the relevant permissions, Page authorization and any required Meta review.','App / Page authentication validation; social sign-in, leads and publishing not enabled'),

@@ -58,7 +58,10 @@ def install(app,db,m,h):
     def valid_login(token):
         row=db.session.get(Login,digest(token)) if token else None
         if not row or aware(row.expires_at)<now():return None
-        student=db.session.get(Student,row.student_id);p=profile(student)
+        student=db.session.get(Student,row.student_id)
+        control=db.session.get(m['StudentControl'],row.student_id)
+        if not student or (control and not control.active):return None
+        p=profile(student)
         return row if student and row.stamp==stamp(student) and row.version==p.security_version else None
     def pending():return valid_login(session.get('pending_auth',''))
     def current():return valid_login(session.get('auth_session',''))
@@ -82,6 +85,9 @@ def install(app,db,m,h):
         if due(student) and not factors(student.id):return redirect(url_for('security_account'))
         return complete(row,token)
     def begin(student,send_verification=False,next_enrollment=None):
+        control=db.session.get(m['StudentControl'],student.id)
+        if control and not control.active:
+            session.clear();flash('This account is deactivated. Contact portal support.');return redirect(url_for('login'))
         p=profile(student);token=secrets.token_urlsafe(32)
         row=Login(digest=digest(token),student_id=student.id,stamp=stamp(student),version=p.security_version,expires_at=now()+timedelta(minutes=15),next_enrollment_id=next_enrollment)
         db.session.add(row);db.session.commit();session.clear();session['pending_auth']=token;session['csrf']=secrets.token_hex(24)
@@ -572,4 +578,4 @@ def install(app,db,m,h):
         if request.endpoint in ('reset_password','forgot_password','verify_email','totp_setup','totp_qr','social_callback','security_account','mfa_challenge','security_settings','passkey_verify'):
             response.headers['Referrer-Policy']='no-referrer';response.headers['Cache-Control']='no-store'
         return response
-    return dict(registration_limit=lambda:limit('signup-ip:'+client_address(),20,60),new_profile=new_profile,begin=begin,password_login=password_login,process_mail=process_mail,policy=policy,profile=profile,due=due,social_exchange=social_exchange)
+    return dict(registration_limit=lambda:limit('signup-ip:'+client_address(),20,60),new_profile=new_profile,begin=begin,password_login=password_login,process_mail=process_mail,policy=policy,profile=profile,due=due,social_exchange=social_exchange,send_mail=queue_mail,limit=limit,actor=actor,challenge=challenge,load_challenge=load_challenge)

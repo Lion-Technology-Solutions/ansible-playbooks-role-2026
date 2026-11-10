@@ -194,7 +194,7 @@ def install(app,db,m,h):
         if invoice.status!='pending':return
         invoice.status='paid'
         enrollment.payment_status='verified';enrollment.verified_at=now();enrollment.payment_reference=enrollment.payment_reference or reference
-        if enrollment.status=='rejected' and not allow_rejected:
+        if enrollment.status in ('rejected','revoked') and not allow_rejected:
             notify(enrollment.student_id,'Payment received — access review required','Your payment was received, but enrollment access requires administrator review.')
             return
         confirm(enrollment)

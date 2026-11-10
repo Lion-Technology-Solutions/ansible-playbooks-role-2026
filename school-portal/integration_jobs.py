@@ -25,9 +25,26 @@ def _invoke_security(identity):
         return app.extensions['auth_security']['process_mail'](identity)
 
 
+def _invoke_lifecycle(identity):
+    from app import app
+    with app.test_request_context('/internal/notification-worker',method='GET'):
+        app.preprocess_request()
+        return app.extensions['notifications']['process'](identity)
+
+
 @subscribe(topic=TOPIC,consumer_group='liontech-integration-delivery',retry_after=60,max_concurrency=8,max_attempts=5)
 async def deliver(message:Message[dict[str,object]]) -> None:
     payload=message.payload;kind=payload.get('kind')
+    if kind=='lifecycle_batch':
+        identities=payload.get('ids')
+        if not isinstance(identities,list) or not 1<=len(identities)<=30 or any(not isinstance(value,str) or len(value)!=32 or any(c not in '0123456789abcdef' for c in value) for value in identities):raise ValueError('Invalid notification batch.')
+        for start in range(0,len(identities),8):
+            await asyncio.gather(*(asyncio.to_thread(_invoke_lifecycle,value) for value in identities[start:start+8]))
+        return
+    if kind=='lifecycle':
+        identity=payload.get('id')
+        if not isinstance(identity,str) or len(identity)!=32 or any(c not in '0123456789abcdef' for c in identity):raise ValueError('Invalid notification identifier.')
+        await asyncio.to_thread(_invoke_lifecycle,identity);return
     if kind=='security_email':
         identity=payload.get('id')
         if not isinstance(identity,str) or len(identity)!=32 or any(c not in '0123456789abcdef' for c in identity):raise ValueError('Invalid security mail identifier.')
