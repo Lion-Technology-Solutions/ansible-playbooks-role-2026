@@ -23,8 +23,8 @@ CATALOG={
   field('STRIPE_SECRET_KEY','Secret API key'),field('STRIPE_WEBHOOK_SECRET','Webhook signing secret')],
   'https://dashboard.stripe.com/apikeys','Use a Stripe sandbox first. Register the webhook shown below for checkout.session.completed and checkout.session.async_payment_succeeded, using snapshot events.','Hosted checkout and verified payment activation'),
  'flutterwave':provider('Flutterwave','payments','F','Configure your Flutterwave merchant account.',[
-  field('FLW_SECRET_KEY','Secret API key'),field('FLW_WEBHOOK_SECRET','Webhook secret hash')],
-  'https://dashboard.flutterwave.com','Use sandbox credentials first. Save your merchant secret and webhook secret. Validation checks API authentication only.','Credential validation; checkout adapter not enabled'),
+  field('FLW_SECRET_KEY','V3 secret API key'),field('FLW_WEBHOOK_SECRET','V3 webhook secret hash'),field('FLW_CHECKOUT_CURRENCY','Enrollment checkout currency (default USD)',False,False,'Use a currency enabled for your Flutterwave merchant account, such as USD, NGN, GHS or XAF. Non-USD checkout requires a current portal exchange rate.')],
+  'https://dashboard.flutterwave.com','Use V3 credentials. In Flutterwave Webhooks, switch to V3, enter the exact URL below and use the same random secret hash in both systems. Test keys never grant real class access. Merchant verification and supported currencies remain provider requirements.','Invoice-linked enrollment-fee checkout and server-verified V3 payment notifications; tuition payment links remain separate'),
  'zoom':provider('Zoom','teaching','classes','Schedule and update live Zoom meetings.',[
   field('ZOOM_ACCOUNT_ID','Account ID',False),field('ZOOM_CLIENT_ID','Client ID',False),field('ZOOM_CLIENT_SECRET','Client secret'),field('ZOOM_HOST_USER','Host email or user ID',False)],
   'https://marketplace.zoom.us','Create and activate a Server-to-Server OAuth app. Enable meeting create/update and host user-read permissions. Choose a host licensed for your class requirements.','Live class scheduling and existing-meeting updates'),

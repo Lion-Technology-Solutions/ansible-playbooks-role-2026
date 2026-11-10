@@ -442,6 +442,25 @@ class CardCheckout(db.Model):
     invoice=db.relationship(FeeInvoice)
 
 
+class FlutterwaveCheckout(db.Model):
+    __tablename__='portal_flutterwave_checkouts'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    invoice_id=db.Column(db.String(32),db.ForeignKey('portal_fee_invoices.id'),nullable=False)
+    __table_args__=(UniqueConstraint('invoice_id','test_mode',name='uq_flutterwave_invoice_mode'),UniqueConstraint('transaction_id','test_mode',name='uq_flutterwave_transaction_mode'))
+    reference=db.Column(db.String(80),unique=True,nullable=False)
+    checkout_url=db.Column(db.Text,nullable=False,default='')
+    amount=db.Column(db.Numeric(16,3),nullable=False)
+    currency=db.Column(db.String(3),nullable=False)
+    fx_rate=db.Column(db.String(60),nullable=False,default='1')
+    fx_as_of=db.Column(db.DateTime(timezone=True))
+    test_mode=db.Column(db.Boolean,nullable=False,default=False)
+    transaction_id=db.Column(db.String(32))
+    paid=db.Column(db.Boolean,nullable=False,default=False)
+    needs_review=db.Column(db.Boolean,nullable=False,default=False)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+    invoice=db.relationship(FeeInvoice)
+
+
 class ScheduledClass(db.Model):
     __tablename__='portal_scheduled_class_details'
     class_id=db.Column(db.Integer,db.ForeignKey('portal_classes.id'),primary_key=True)
@@ -966,7 +985,7 @@ def create_app(config=None):
             admin_token = app.extensions['admin_security']['stamp']()
             if not hmac.compare_digest(admin_token.encode(), session.get('admin_auth', '').encode()):
                 session.clear()
-        if request.method == 'POST' and request.endpoint not in ('stripe_webhook','chatgpt_context','chatgpt_draft','chatgpt_apply'):
+        if request.method == 'POST' and request.endpoint not in ('stripe_webhook','flutterwave_webhook','chatgpt_context','chatgpt_draft','chatgpt_apply'):
             if request.endpoint in ('student_profile','admin_profile'):
                 request.max_content_length=2*1024*1024+16384
             if request.endpoint == 'manual_fee':

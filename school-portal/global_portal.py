@@ -418,6 +418,9 @@ def install(app,db,m,h):
         db.session.commit();flash(f'{sent} class update email(s) sent. Failed deliveries remain available for retry.')
         return redirect(url_for('schedule_admin'))
 
+    from flutterwave_payments import install as install_flutterwave
+    app.extensions['flutterwave_payments']=install_flutterwave(app,db,m,dict(student_required=student_required,owner_enrollment=owner_enrollment,verify_identity=verify_identity,settle=settle,rates=rates))
+
     @app.context_processor
     def global_context():
         return dict(card_payment_records=db.session.scalars(select(Checkout).order_by(Checkout.created_at.desc())).all() if session.get('admin') else [],global_invoices=db.session.scalars(select(Invoice).order_by(Invoice.created_at.desc())).all() if session.get('admin') else [],manual_fee_records=db.session.scalars(select(Manual).order_by(Manual.created_at.desc())).all() if session.get('admin') else [],global_prices={item.course_id:item for item in db.session.scalars(select(GlobalTuition))} if session.get('admin') else {})

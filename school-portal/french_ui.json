@@ -248,5 +248,16 @@
   "Create your student account →": "Créez votre compte étudiant →",
   "TAKE YOUR NEXT STEP": "FRANCHISSEZ UNE NOUVELLE ÉTAPE",
   "Make room for what you could become.": "Donnez une nouvelle place à vos ambitions.",
-  "Explore practical technology programs and create one account for your learning journey.": "Découvrez nos formations technologiques pratiques et créez un compte pour votre parcours."
+  "Explore practical technology programs and create one account for your learning journey.": "Découvrez nos formations technologiques pratiques et créez un compte pour votre parcours.",
+  "Pay with Flutterwave": "Payer avec Flutterwave",
+  "Continue to Flutterwave →": "Continuer vers Flutterwave →",
+  "Sandbox mode: this test payment will not activate enrollment or class access.": "Mode test : ce paiement n’activera ni l’inscription ni l’accès aux cours.",
+  "Test payment verified. Sandbox transactions do not activate enrollment.": "Paiement de test vérifié. Les transactions de test n’activent pas l’inscription.",
+  "Payment has not been verified. Check your payment record or contact support before paying again.": "Le paiement n’a pas été vérifié. Consultez vos paiements ou contactez l’assistance avant de payer à nouveau.",
+  "Available payment methods depend on your country and the academy’s merchant account. Confirm the final amount on Flutterwave before paying.": "Les modes de paiement disponibles dépendent de votre pays et du compte marchand de l’académie. Confirmez le montant final sur Flutterwave avant de payer.",
+  "Flutterwave payment": "Paiement Flutterwave",
+  "Sandbox payment": "Paiement de test",
+  "Awaiting verification": "En attente de vérification",
+  "Review required": "Vérification requise",
+  "No Flutterwave checkout attempts.": "Aucune tentative de paiement Flutterwave."
 }

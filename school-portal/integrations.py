@@ -121,7 +121,7 @@ def install(app,db,m,h):
         if provider=='flutterwave':
             result=transport('https://api.flutterwave.com/v3/balances',headers=bearer(values['FLW_SECRET_KEY']))
             if result.get('status')!='success':raise ValueError('Flutterwave authentication was not verified.')
-            return 'connected','Merchant API authentication verified. Flutterwave checkout is not enabled in this release.'
+            return 'connected','V3 merchant API authentication verified. Register the V3 webhook URL and matching secret hash. Checkout is for enrollment fees; sandbox payments do not grant class access.'
         if provider=='whatsapp':
             basic=base64.b64encode((values['TWILIO_ACCOUNT_SID']+':'+values['TWILIO_AUTH_TOKEN']).encode()).decode()
             result=transport('https://api.twilio.com/2010-04-01/Accounts/'+quote(values['TWILIO_ACCOUNT_SID'],safe='')+'.json',headers={'Authorization':'Basic '+basic})
@@ -192,6 +192,10 @@ def install(app,db,m,h):
                     if provider=='email' and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',values['SENDGRID_FROM_EMAIL']):raise ValueError('Enter the verified sender email address.')
                     if provider=='microsoft' and not re.fullmatch(r'(common|organizations|consumers|[a-fA-F0-9-]{36})',values['MICROSOFT_TENANT']):raise ValueError('Use common, organizations, consumers or a tenant GUID.')
                     if provider=='whatsapp' and not re.fullmatch(r'whatsapp:\+\d{7,15}',values['TWILIO_WHATSAPP_FROM']):raise ValueError('Use whatsapp:+ followed by the full international sender number.')
+                    if provider=='flutterwave' and values.get('FLW_CHECKOUT_CURRENCY'):
+                        from flutterwave_payments import CURRENCIES as FLW_CURRENCIES
+                        values['FLW_CHECKOUT_CURRENCY']=values['FLW_CHECKOUT_CURRENCY'].upper()
+                        if values['FLW_CHECKOUT_CURRENCY'] not in FLW_CURRENCIES:raise ValueError('Choose a supported Flutterwave currency, such as USD, NGN, GHS or XAF.')
                     encrypted=seal(provider,'academy',values)
                     if not row:row=Setting(provider=provider,ciphertext=encrypted);db.session.add(row)
                     else:row.ciphertext=encrypted;row.revision+=1
@@ -221,7 +225,7 @@ def install(app,db,m,h):
             return redirect(url_for('integration_detail',provider=provider))
         values=config(provider,include_disabled=True)
         public={item['key']:values.get(item['key'],'') for item in entry['fields'] if not item['secret']}
-        return render_template('integration_detail.html',admin_view='integrations',provider=provider,entry=entry,connection=status(provider),public=public,saved={item['key']:bool(values.get(item['key'])) for item in entry['fields']},revision=row.revision if row else 0,callback=ORIGIN+'/connections/'+provider+'/callback' if provider in ('google','microsoft') else None,webhook=ORIGIN+'/webhooks/stripe' if provider=='stripe' else None)
+        return render_template('integration_detail.html',admin_view='integrations',provider=provider,entry=entry,connection=status(provider),public=public,saved={item['key']:bool(values.get(item['key'])) for item in entry['fields']},revision=row.revision if row else 0,callback=ORIGIN+'/connections/'+provider+'/callback' if provider in ('google','microsoft') else None,webhook=ORIGIN+'/webhooks/'+provider if provider in ('stripe','flutterwave') else None)
 
     def calendar_definition(provider):
         values=config(provider)
