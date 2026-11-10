@@ -12,3 +12,9 @@ pycountry==24.6.1
 cryptography==50.0.2
 
 vercel-queue==0.10.0
+
+webauthn==3.0.1
+pyotp==2.10.0
+Authlib==1.9.5
+qrcode==8.2
+requests==2.34.2

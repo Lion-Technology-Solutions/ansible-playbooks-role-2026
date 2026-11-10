@@ -18,9 +18,20 @@ def _invoke(operation,*args):
         return app.extensions['integrations'][operation](*args)
 
 
+def _invoke_security(identity):
+    from app import app
+    with app.test_request_context('/internal/security-worker',method='GET'):
+        app.preprocess_request()
+        return app.extensions['auth_security']['process_mail'](identity)
+
+
 @subscribe(topic=TOPIC,consumer_group='liontech-integration-delivery',retry_after=60,max_concurrency=8,max_attempts=5)
 async def deliver(message:Message[dict[str,object]]) -> None:
     payload=message.payload;kind=payload.get('kind')
+    if kind=='security_email':
+        identity=payload.get('id')
+        if not isinstance(identity,str) or len(identity)!=32 or any(c not in '0123456789abcdef' for c in identity):raise ValueError('Invalid security mail identifier.')
+        await asyncio.to_thread(_invoke_security,identity);return
     if kind=='probe':
         await asyncio.to_thread(_invoke,'worker_probe');return
     if kind=='delivery':

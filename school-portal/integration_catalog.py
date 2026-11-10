@@ -7,6 +7,15 @@ def provider(name,category,glyph,description,fields,url,guide,capability):
     return dict(name=name,category=category,glyph=glyph,description=description,fields=fields,url=url,guide=guide,capability=capability)
 
 CATALOG={
+ 'google_signin':provider('Google Sign-in','security','G','Google account sign-up and sign-in.',[
+  field('GOOGLE_SIGNIN_CLIENT_ID','Google OAuth client ID',False),field('GOOGLE_SIGNIN_CLIENT_SECRET','Google OAuth client secret')],
+  'https://console.cloud.google.com/apis/credentials','Create a Web application OAuth client. Register https://liontech-student-portal.vercel.app/auth/google/callback exactly. Use openid, email and profile scopes, then enable Google in Sign-in settings. Calendar credentials remain separate.','OpenID Connect identity verification; portal email and MFA policy still applies'),
+ 'facebook_signin':provider('Facebook Sign-in','security','f','Facebook account sign-up and sign-in.',[
+  field('FACEBOOK_SIGNIN_CLIENT_ID','Meta application ID',False),field('FACEBOOK_SIGNIN_CLIENT_SECRET','Meta application secret')],
+  'https://developers.facebook.com/apps','Configure Facebook Login for Web and register https://liontech-student-portal.vercel.app/auth/facebook/callback. Enable email/public_profile and complete any required Meta review, privacy policy and data-deletion settings. Enable Facebook in Sign-in settings.','Validated app-scoped identity; independent email verification and portal MFA'),
+ 'sms_verify':provider('SMS OTP · Twilio Verify','security','W','Phone verification and two-factor SMS codes.',[
+  field('VERIFY_ACCOUNT_SID','Twilio account SID',False),field('VERIFY_AUTH_TOKEN','Twilio auth token'),field('VERIFY_SERVICE_SID','Verify service SID (VA...)',False)],
+  'https://console.twilio.com/us1/develop/verify/services','Create a Twilio Verify service with SMS enabled. Configure your permitted destinations, fraud guard, account billing and any required trial-number verification. Account authentication does not prove SMS delivery to every country.','Student-initiated SMS enrollment and login challenges; verified codes required'),
  'openai':provider('ChatGPT · OpenAI','ai','✦','AI student support and reviewed admin updates.',[
   field('OPENAI_API_KEY','OpenAI project API key'),field('OPENAI_MODEL','Responses API model',False,True,'Recommended: gpt-5.4-mini. Use a model available to your OpenAI project.')],
   'https://platform.openai.com/api-keys','Create a restricted project API key with Responses and model-read access. Configure project billing and spending limits in OpenAI. Save and test here, then open AI Assistant. Your ChatGPT sign-in does not provide an API key.','Student inquiries; editable program, curriculum, lesson, announcement and live-class drafts. Admin review is required to apply changes'),
@@ -44,5 +53,5 @@ CATALOG={
   field('LINKEDIN_CLIENT_ID','OAuth client ID',False),field('LINKEDIN_CLIENT_SECRET','OAuth client secret'),field('LINKEDIN_ACCESS_TOKEN','Authorized access token',True,False)],
   'https://www.linkedin.com/developers/apps','Enable the appropriate LinkedIn product and obtain user consent. An optional token with openid/profile can be tested against userinfo.','Authorized profile validation; professional sign-in and sharing not enabled'),
 }
-CATEGORIES={'all':'All','payments':'Payments','teaching':'Teaching','communication':'Communication','microsoft':'Microsoft','social':'Social','ai':'AI Assistant'}
+CATEGORIES={'all':'All','payments':'Payments','teaching':'Teaching','communication':'Communication','microsoft':'Microsoft','social':'Social','ai':'AI Assistant','security':'Sign-in & Security'}
 ENV_PROVIDER={item['key']:slug for slug,entry in CATALOG.items() for item in entry['fields']}

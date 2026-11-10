@@ -70,6 +70,94 @@ class StudentIdentity(db.Model):
     student = db.relationship(Student, back_populates='identity')
 
 
+class AuthPolicy(db.Model):
+    __tablename__='portal_auth_policy'
+    id=db.Column(db.Integer,primary_key=True,default=1)
+    username_login=db.Column(db.Boolean,nullable=False,default=True)
+    number_login=db.Column(db.Boolean,nullable=False,default=True)
+    email_login=db.Column(db.Boolean,nullable=False,default=True)
+    google_login=db.Column(db.Boolean,nullable=False,default=False)
+    facebook_login=db.Column(db.Boolean,nullable=False,default=False)
+    require_email=db.Column(db.Boolean,nullable=False,default=True)
+    reset_email=db.Column(db.Boolean,nullable=False,default=True)
+    require_mfa=db.Column(db.Boolean,nullable=False,default=True)
+    grace_days=db.Column(db.Integer,nullable=False,default=7)
+    revision=db.Column(db.Integer,nullable=False,default=1)
+
+
+class AuthProfile(db.Model):
+    __tablename__='portal_auth_profiles'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    username=db.Column(db.String(40),unique=True,nullable=False)
+    email_verified_at=db.Column(db.DateTime(timezone=True))
+    email_grace_until=db.Column(db.DateTime(timezone=True))
+    activated_at=db.Column(db.DateTime(timezone=True))
+    security_version=db.Column(db.Integer,nullable=False,default=1)
+
+
+class AuthSession(db.Model):
+    __tablename__='portal_auth_sessions'
+    digest=db.Column(db.String(64),primary_key=True)
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),nullable=False,index=True)
+    stamp=db.Column(db.String(64),nullable=False)
+    version=db.Column(db.Integer,nullable=False)
+    expires_at=db.Column(db.DateTime(timezone=True),nullable=False)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+    mfa_at=db.Column(db.DateTime(timezone=True))
+    recovery_used=db.Column(db.Boolean,nullable=False,default=False)
+    next_enrollment_id=db.Column(db.Integer,db.ForeignKey('portal_enrollments.id'))
+
+
+class AuthChallenge(db.Model):
+    __tablename__='portal_auth_challenges'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),index=True)
+    purpose=db.Column(db.String(30),nullable=False,index=True)
+    digest=db.Column(db.String(64),unique=True,nullable=False)
+    binding=db.Column(db.String(64),nullable=False,default='')
+    ciphertext=db.Column(db.Text,nullable=False)
+    stamp=db.Column(db.String(64),nullable=False,default='')
+    expires_at=db.Column(db.DateTime(timezone=True),nullable=False)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+    consumed=db.Column(db.Boolean,nullable=False,default=False)
+    attempts=db.Column(db.Integer,nullable=False,default=0)
+
+
+class AuthFactor(db.Model):
+    __tablename__='portal_auth_factors'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),nullable=False,index=True)
+    method=db.Column(db.String(15),nullable=False)
+    ciphertext=db.Column(db.Text,nullable=False)
+    credential_id=db.Column(db.String(1500),unique=True)
+    sign_count=db.Column(db.BigInteger,nullable=False,default=0)
+    last_step=db.Column(db.BigInteger,nullable=False,default=-1)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+
+
+class AuthRecoveryCode(db.Model):
+    __tablename__='portal_auth_recovery_codes'
+    digest=db.Column(db.String(64),primary_key=True)
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),nullable=False,index=True)
+    used_at=db.Column(db.DateTime(timezone=True))
+
+
+class AuthSocialIdentity(db.Model):
+    __tablename__='portal_auth_social_identities'
+    provider=db.Column(db.String(15),primary_key=True)
+    subject=db.Column(db.String(255),primary_key=True)
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),nullable=False,index=True)
+
+
+class AuthMail(db.Model):
+    __tablename__='portal_auth_mail'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    ciphertext=db.Column(db.Text,nullable=False)
+    status=db.Column(db.String(20),nullable=False,default='pending')
+    attempts=db.Column(db.Integer,nullable=False,default=0)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+
+
 class AssistantDraft(db.Model):
     __tablename__='portal_assistant_drafts'
     id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
@@ -556,6 +644,7 @@ class LoginAttempt(db.Model):
 
 def seed(connection):
     """Idempotent bootstrap under the schema transaction/advisory lock."""
+    if not connection.execute(select(AuthPolicy.id).where(AuthPolicy.id==1)).first():connection.execute(AuthPolicy.__table__.insert().values(id=1))
     table = Course.__table__
     if not connection.execute(select(GrowthGoal.year).where(GrowthGoal.year==2027)).first():
         connection.execute(GrowthGoal.__table__.insert().values(year=2027,students=5000))
@@ -627,8 +716,15 @@ def whatsapp(message):
     return 'https://wa.me/' + SUPPORT + '?' + urlencode({'text': message})
 
 
+def auth_account_status(student):
+    policy=db.session.get(AuthPolicy,1);profile=db.session.get(AuthProfile,student.id)
+    if not policy or not policy.require_email:return 'Active'
+    if profile and profile.email_verified_at:return 'Email verified · active'
+    return 'Email verification pending'
+
+
 def account_whatsapp(student):
-    return whatsapp(f'LionTech account creation notification\nStudent number: {student.student_number}\nName: {student.name}\nEmail: {student.email}\nWhatsApp: {student.phone}\nCountry: {student.country}\nStudent type: {student.kind}\nAccount: Active (automatically approved)\nEnrollment: Requires payment confirmation\nReview: https://liontech-student-portal.vercel.app/admin#students')
+    return whatsapp(f'LionTech account creation notification\nStudent number: {student.student_number}\nName: {student.name}\nEmail: {student.email}\nWhatsApp: {student.phone}\nCountry: {student.country}\nStudent type: {student.kind}\nAccount: {auth_account_status(student)}\nEnrollment: Requires payment confirmation\nReview: https://liontech-student-portal.vercel.app/admin#students')
 
 
 def content_slug(value):
@@ -748,8 +844,8 @@ def create_app(config=None):
         response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
-        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self' https://checkout.stripe.com https://accounts.google.com https://login.microsoftonline.com; frame-ancestors 'none'; base-uri 'self'"
+        response.headers.setdefault('Referrer-Policy','strict-origin-when-cross-origin')
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self' https://checkout.stripe.com https://accounts.google.com https://login.microsoftonline.com https://www.facebook.com; frame-ancestors 'none'; base-uri 'self'"
         return response
 
     @app.context_processor
@@ -762,14 +858,14 @@ def create_app(config=None):
         return dict(csrf=session['csrf'], support_url=whatsapp('Hello LionTech Academy, I need help with my student portal.'),
                     completion_url=whatsapp('Project completed'), account_request_url=account_request_url,
                     **app.extensions.get('global_experience',{}),
-                    countries=COUNTRIES, legacy_countries=LEGACY_COUNTRIES, payments=PAYMENTS, course_payment=course_payment, account_whatsapp=account_whatsapp,
+                    countries=COUNTRIES, legacy_countries=LEGACY_COUNTRIES, payments=PAYMENTS, course_payment=course_payment, account_whatsapp=account_whatsapp, auth_account_status=auth_account_status,
                     branding=db.session.get(SiteBranding,1), utcnow=now(), aware=aware,
                     ui_language=language,ui_timezone=timezone,timezones=TIMEZONES,currencies=CURRENCIES,
                     t=lambda text:translated(text,language),current_path=request.full_path.rstrip('?'),
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review'))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings') and bool(g.student or session.get('admin')))
 
     def student_required():
         def decorate(fn):
@@ -1158,6 +1254,7 @@ def create_app(config=None):
     @app.route('/register', methods=['GET', 'POST'])
     def register():
         if request.method == 'POST':
+            app.extensions['auth_security']['registration_limit']()
             try:
                 name, email = field('name'), field('email', 254).lower()
                 phone, country, kind = field('phone', 40), field('country', 80), field('kind', 12)
@@ -1180,6 +1277,7 @@ def create_app(config=None):
                 db.session.add(student)
                 db.session.flush()
                 db.session.add(StudentIdentity(student_id=student.id))
+                app.extensions['auth_security']['new_profile'](student,request.form.get('username',''))
                 db.session.add(AccountRequest(student_id=student.id))
                 db.session.add(StudentPreference(student_id=student.id,language=language,timezone=residence(country)['timezone']))
                 enrollment=None
@@ -1187,14 +1285,10 @@ def create_app(config=None):
                     enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' else None)
                     db.session.add(enrollment)
                 db.session.commit()
-                session.clear()
-                session['student_id'] = student.id
-                session['student_auth'] = hmac.new(app.secret_key.encode(), student.password_hash.encode(), 'sha256').hexdigest()
-                session.permanent = True
-                flash(f'Your account is active. Your student number is {student.student_number}. Course access opens after payment confirmation.')
-                return redirect(url_for('global_payment',enrollment_id=enrollment.id) if enrollment else url_for('portal'))
+                flash(f'Your student number is {student.student_number}. Email verification activates your account; verified payment activates enrollment.')
+                return app.extensions['auth_security']['begin'](student,send_verification=True,next_enrollment=enrollment.id if enrollment else None)
             except ValueError as exc:
-                flash(str(exc))
+                db.session.rollback();flash(str(exc))
             except IntegrityError:
                 db.session.rollback()
                 flash('This email already has an account. Sign in or contact portal support.')
@@ -1222,26 +1316,7 @@ def create_app(config=None):
     @app.route('/login', methods=['GET', 'POST'])
     @app.route('/student/login', methods=['GET', 'POST'])
     def login():
-        if request.method == 'POST':
-            email = request.form.get('email', '').strip().lower()[:254]
-            key, blocked = throttled('student:' + email)
-            if blocked:
-                flash('Too many sign-in attempts. Try again in 15 minutes or contact support.')
-                return render_template('login.html', admin=False), 429
-            student = db.session.scalar(select(Student).where(Student.email == email))
-            password = request.form.get('password', '')
-            if student and len(password) <= 128 and check_password_hash(student.password_hash, password):
-                session.clear()
-                session['student_id'] = student.id
-                session['student_auth'] = hmac.new(app.secret_key.encode(), student.password_hash.encode(), 'sha256').hexdigest()
-                session.permanent = True
-                if db.session.get(LoginAttempt, key):
-                    db.session.delete(db.session.get(LoginAttempt, key))
-                    db.session.commit()
-                return redirect(url_for('portal'))
-            failed_login(key)
-            flash('Invalid email or password.')
-        return render_template('login.html', admin=False)
+        return app.extensions['auth_security']['password_login']()
 
     @app.route('/admin/login', methods=['GET', 'POST'])
     def admin_login():
@@ -1688,6 +1763,8 @@ def create_app(config=None):
     app.extensions['global_experience']=install(app,db,globals(),dict(student_required=student_required,admin_required=admin_required,notify=notify,confirm_enrollment=confirm_enrollment,offer_for=offer_for))
     from portal_assistant import install as install_assistant
     app.extensions['assistant']=install_assistant(app,db,globals(),dict(admin_required=admin_required,student_required=student_required))
+    from auth_security import install as install_security
+    app.extensions['auth_security']=install_security(app,db,globals(),dict(admin_required=admin_required))
     return app
 
 

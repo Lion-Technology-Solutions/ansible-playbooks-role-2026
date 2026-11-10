@@ -85,6 +85,13 @@ def install(app,db,m,h):
 
     def check(provider,values):
         bearer=lambda token:{'Authorization':'Bearer '+token}
+        if provider in ('google_signin','facebook_signin'):
+            return 'oauth_ready','Application settings saved. Register the exact sign-in callback and enable this provider in Sign-in settings. A real user must complete consent to verify the login flow.'
+        if provider=='sms_verify':
+            basic=base64.b64encode((values['VERIFY_ACCOUNT_SID']+':'+values['VERIFY_AUTH_TOKEN']).encode()).decode()
+            result=transport('https://verify.twilio.com/v2/Services/'+quote(values['VERIFY_SERVICE_SID'],safe=''),headers={'Authorization':'Basic '+basic})
+            if result.get('sid')!=values['VERIFY_SERVICE_SID']:raise ValueError('Twilio Verify service could not be verified.')
+            return 'connected','Verify service authentication passed. Actual SMS delivery requires approved destinations, available billing and a student-initiated test.'
         if provider=='openai':
             model=values['OPENAI_MODEL']
             if not re.fullmatch(r'[a-zA-Z0-9._-]{1,100}',model):raise ValueError('Use a valid Responses API model identifier.')
@@ -147,7 +154,7 @@ def install(app,db,m,h):
         if row and not row.enabled:return {'label':'Paused','kind':'paused','detail':'New actions are paused. Existing Stripe webhooks can still be verified.','checked_at':row.checked_at}
         if not complete:return {'label':'Not connected','kind':'disconnected','detail':'Complete the setup fields to configure this provider.','checked_at':None}
         state=row.status if row else 'needs_test'
-        labels={'connected':'Connection verified','needs_test':'Saved · test required','oauth_ready':'Student authorization required','attention':'Action required','error':'Connection test failed'}
+        labels={'connected':'Connection verified','needs_test':'Saved · test required','oauth_ready':'OAuth setup saved · consent required','attention':'Action required','error':'Connection test failed'}
         return {'label':labels.get(state,'Saved · test required'),'kind':state,'detail':row.detail if row else 'Credentials are configured in the deployment. Save and validate them here to manage them from this hub.','checked_at':row.checked_at if row else None}
 
     @app.get('/admin/integrations')

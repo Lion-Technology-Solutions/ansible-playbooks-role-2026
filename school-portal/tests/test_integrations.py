@@ -38,6 +38,7 @@ def configure(app,manager,provider,values=None,action='save',**extra):
 
 
 def http_ok(url,method='GET',payload=None,headers=None,form=False):
+    if 'verify.twilio.com/v2/Services/' in url:return {'sid':values_for('sms_verify')['VERIFY_SERVICE_SID']}
     if 'api.openai.com/v1/models/' in url:return {'id':url.rsplit('/',1)[-1]}
     if 'api.stripe.com' in url:return {'id':'acct_unit','charges_enabled':True}
     if url=='https://zoom.us/oauth/token':return {'access_token':'unit_zoom_access'}
@@ -95,7 +96,7 @@ def test_connection_checks_all_catalog_providers_are_real_and_failures_are_redac
         assert configure(app,manager,provider,action='test').status_code==200
         with app.app_context():
             row=db.session.get(IntegrationSetting,provider)
-            assert row.status==('oauth_ready' if provider in ('google','microsoft') else 'connected')
+            assert row.status==('oauth_ready' if provider in ('google','microsoft','google_signin','facebook_signin') else 'connected')
     def failure(*args,**kwargs):raise HTTPError('https://provider.invalid?secret=LEAK-ME',403,'LEAK-ME',{},io.BytesIO(b'LEAK-ME'))
     app.config['INTEGRATION_HTTP']=failure
     page=configure(app,manager,'stripe',action='test')
