@@ -18,6 +18,7 @@ def collect_events(session_,context,instances):
 
 @event.listens_for(Session,'after_commit')
 def publish_events(session_):
+    session_.info.pop('tuition_managed',None)
     identities=session_.info.pop('lifecycle_publish',set())
     if not has_app_context():return
     publisher=current_app.config.get('LIFECYCLE_PUBLISH')
@@ -33,7 +34,8 @@ def publish_events(session_):
 
 
 @event.listens_for(Session,'after_rollback')
-def rollback_events(session_):session_.info.pop('lifecycle_publish',None)
+def rollback_events(session_):
+    session_.info.pop('lifecycle_publish',None);session_.info.pop('tuition_managed',None)
 
 
 TITLES={
@@ -67,6 +69,7 @@ def install(app,db,m,h):
         target.add(row);target.info.setdefault('lifecycle_publish',set()).add(row.id)
         return row
     def collect(session_):
+        if 'student_management' in app.extensions:app.extensions['student_management']['guard'](session_)
         for row in list(session_.new)+list(session_.dirty):
             state=inspect(row)
             if isinstance(row,Student) and state.pending:enqueue(row,'account_created',channel='whatsapp',session_=session_)
@@ -78,6 +81,7 @@ def install(app,db,m,h):
                 student=session_.get(Student,row.student_id)
                 if student and (row.email_verified_at or (student.created_at and aware(student.created_at)>now()-timedelta(minutes=5))):enqueue(student,'account_approved',session_=session_)
             elif isinstance(row,Enrollment):
+                if row.id in session_.info.get('tuition_managed',set()):continue
                 student=session_.get(Student,row.student_id)
                 if not student:continue
                 payload={'enrollment_id':row.id,'course':row.course.name if row.course else ''}
@@ -86,6 +90,13 @@ def install(app,db,m,h):
                     if row.status=='approved':enqueue(student,'enrollment_approved',payload=payload,session_=session_)
                     elif row.status in ('revoked','rejected') and ('approved' in state.attrs.status.history.deleted or row.status=='revoked'):enqueue(student,'access_revoked',payload=payload,session_=session_)
     def message(event):
+        if event.kind=='admin_message':return event.payload['subject'],event.payload['body']+'\n\nStudent number: '+event.student.student_number+'\n'+ORIGIN+'/enrollments'
+        if event.kind=='tuition_status':
+            status=event.payload.get('status','pending');course=event.payload.get('course','');reason=event.payload.get('reason','')
+            enrollment=db.session.get(Enrollment,event.payload.get('enrollment_id'));control=db.session.get(Control,event.student_id)
+            granted=bool(enrollment and enrollment.status=='approved' and enrollment.payment_status=='verified' and (not control or control.active))
+            access='Your class access is available while your account is active.' if granted else 'Your course access is paused. Please review payment options or contact support.'
+            return 'LionTech tuition update: '+status,('Hello '+event.student.name+',\nProgram: '+course+'\nTuition status: '+status+'\n'+access+'\n'+reason+'\nStudent number: '+event.student.student_number+'\nReview tuition and payment options: '+ORIGIN+'/payments/enrollment/'+str(event.payload['enrollment_id'])+'\nSupport: https://wa.me/14375756656')
         student=event.student;pref=db.session.get(m['StudentPreference'],student.id);fr=bool(pref and pref.language=='fr');data=event.payload
         title=TITLES.get(event.kind,('LionTech account update','Mise à jour du compte LionTech'))[int(fr)]
         lines=[('Bonjour ' if fr else 'Hello ')+student.name+',',MESSAGES.get(event.kind,('Your account has been updated.','Votre compte a été mis à jour.'))[int(fr)],('Numéro étudiant : ' if fr else 'Student number: ')+student.student_number]
@@ -103,9 +114,15 @@ def install(app,db,m,h):
         if not row or row.status=='accepted' or row.attempts>=5:return
         if aware(row.created_at)<now()-timedelta(days=7):row.status='expired';db.session.commit();return
         student=row.student
+        if row.kind=='tuition_status':
+            enrollment=db.session.get(Enrollment,row.payload.get('enrollment_id'));tuition=db.session.get(m['TuitionControl'],row.payload.get('enrollment_id'))
+            if not enrollment or enrollment.student_id!=student.id or not tuition or tuition.revision!=row.payload.get('tuition_revision') or tuition.status!=row.payload.get('status') or db.session.get(m['StudentArchive'],student.id):
+                row.status='cancelled';db.session.commit();return
         if row.kind=='payment_due':
             enrollment=db.session.get(Enrollment,row.payload.get('enrollment_id'));control=db.session.get(Control,student.id)
-            settled=not enrollment or (control and not control.active) or enrollment.status in ('revoked','rejected')
+            tuition=db.session.get(m['TuitionControl'],enrollment.id) if enrollment else None
+            tuition_overdue=bool(tuition and tuition.status=='overdue' and not tuition.access_hold)
+            settled=not enrollment or (control and not control.active) or enrollment.status=='rejected' or (enrollment.status=='revoked' and not tuition_overdue) or bool(tuition and tuition.status=='completed' and tuition.source=='admin')
             if row.payload.get('fee'):
                 invoice=db.session.scalar(select(m['FeeInvoice']).where(m['FeeInvoice'].enrollment_id==row.payload.get('enrollment_id')))
                 settled=settled or not invoice or invoice.status!='pending'
@@ -142,6 +159,13 @@ def install(app,db,m,h):
                     pref=db.session.get(m['StudentPreference'],student.id);zone=pref.timezone if pref else 'America/Toronto'
                     local=aware(lesson.starts_at).astimezone(ZoneInfo(zone)).strftime('%Y-%m-%d %H:%M')+' '+zone
                     variables={'1':student.student_number,'2':lesson.title.replace('\n',' ').replace('\r',' '),'3':local,'4':ORIGIN+'/classes/'+str(lesson.id)}
+                if row.kind=='tuition_status':
+                    consent=db.session.get(m['TuitionWhatsAppPreference'],student.id)
+                    if not consent or not consent.enabled or not consent.consented_at:
+                        row.status='awaiting_student_consent';db.session.commit();return
+                    if not re.fullmatch(r'\+[1-9][0-9]{6,14}',consent.phone):row.status='invalid_recipient';db.session.commit();return
+                    template=values.get('TWILIO_TUITION_TEMPLATE_SID','');recipient='whatsapp:'+consent.phone
+                    variables={'1':student.student_number,'2':row.payload['status'],'3':row.payload.get('course','Program').replace('\n',' ').replace('\r',' '),'4':ORIGIN+'/payments/enrollment/'+str(row.payload['enrollment_id'])}
                 if not service['ready']('whatsapp') or not re.fullmatch(r'HX[0-9a-fA-F]{32}',template):
                     row.status='awaiting_whatsapp_template';db.session.commit();return
                 if not re.fullmatch(r'AC[0-9a-fA-F]{32}',values.get('TWILIO_ACCOUNT_SID','')) or not re.fullmatch(r'whatsapp:\+[1-9][0-9]{6,14}',values.get('TWILIO_WHATSAPP_FROM','')):raise ValueError()
@@ -153,15 +177,17 @@ def install(app,db,m,h):
             row.status='failed';db.session.commit();app.logger.warning('Lifecycle notification provider handoff failed.')
             raise RuntimeError('Notification provider handoff failed.') from None
     def due_reminders():
+        if 'student_management' in app.extensions:app.extensions['student_management']['sweep']()
         if db.engine.dialect.name=='postgresql':db.session.execute(text('SELECT pg_advisory_xact_lock(73592043)'))
         count=0
         for plan in db.session.scalars(select(m['BillingSelection'])).all():
             enrollment=db.session.get(Enrollment,plan.enrollment_id);student=enrollment.student;control=db.session.get(Control,student.id)
-            if (control and not control.active) or enrollment.status in ('revoked','rejected'):continue
+            tuition=db.session.get(m['TuitionControl'],enrollment.id)
+            if (control and not control.active) or enrollment.status=='rejected' or (enrollment.status=='revoked' and (not tuition or tuition.status!='overdue' or tuition.access_hold)):continue
             pref=db.session.get(m['StudentPreference'],student.id);today=now().astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date()
             paid=sum((entry.amount for entry in db.session.scalars(select(m['PaymentEntry']).where(m['PaymentEntry'].enrollment_id==enrollment.id,m['PaymentEntry'].currency==plan.currency,~m['PaymentEntry'].id.in_(select(m['FeeLedger'].entry_id))))),Decimal(0))
             parts=installment_schedule(plan.total,plan.installments,plan.starts_on);due=[part for part in parts if part['due']<=today];remaining=sum((part['amount'] for part in due),Decimal(0))-paid
-            if remaining<=0:continue
+            if remaining<=0 or (tuition and tuition.status=='completed' and tuition.source=='admin'):continue
             last=db.session.scalar(select(Event).where(Event.event_key.like('due:'+str(enrollment.id)+':%')).order_by(Event.created_at.desc()).limit(1))
             if last and not any(part['due']==today for part in due) and aware(last.created_at)>now()-timedelta(days=7):continue
             key='due:'+str(enrollment.id)+':'+today.isoformat()
@@ -173,7 +199,8 @@ def install(app,db,m,h):
             enqueue(student,'payment_due',key,dict(enrollment_id=enrollment.id,course=enrollment.course.name,due=first_due.isoformat(),amount=str(remaining)+' '+plan.currency));count+=1
         for invoice in db.session.scalars(select(m['FeeInvoice']).where(m['FeeInvoice'].status=='pending')).all():
             enrollment=invoice.enrollment;student=enrollment.student;control=db.session.get(Control,student.id)
-            if (control and not control.active) or enrollment.status in ('revoked','rejected'):continue
+            tuition=db.session.get(m['TuitionControl'],enrollment.id)
+            if (control and not control.active) or enrollment.status=='rejected' or (enrollment.status=='revoked' and (not tuition or tuition.status!='overdue' or tuition.access_hold)):continue
             pref=db.session.get(m['StudentPreference'],student.id);today=now().astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date();due=aware(invoice.created_at).astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date()
             if today<due:continue
             last=db.session.scalar(select(Event).where(Event.event_key.like('fee-due:'+invoice.id+':%')).order_by(Event.created_at.desc()).limit(1))
@@ -183,7 +210,7 @@ def install(app,db,m,h):
             enqueue(student,'payment_due',key,dict(enrollment_id=enrollment.id,course=enrollment.course.name,due=due.isoformat(),amount=str(invoice.amount_usd)+' USD',fee=True));count+=1
         db.session.commit();return count
     def drain(limit=100):
-        identities=list(db.session.scalars(select(Event.id).where(Event.status.in_(['pending','failed','awaiting_email','awaiting_whatsapp_template']),Event.attempts<5).order_by(Event.created_at).limit(limit)))
+        identities=list(db.session.scalars(select(Event.id).where(Event.status.in_(['pending','failed','awaiting_email','awaiting_whatsapp_template','awaiting_student_consent']),Event.attempts<5).order_by(Event.created_at).limit(limit)))
         for identity in identities:
             try:process(identity)
             except RuntimeError:pass
@@ -213,6 +240,7 @@ def install(app,db,m,h):
                 if not control.reviewed_at:control.reviewed_at=now()
             elif action in ('deactivate','reactivate'):
                 if not control:control=Control(student_id=student.id,active=True,revision=0);db.session.add(control)
+                if action=='reactivate' and db.session.get(m['StudentArchive'],student.id):abort(400,'Restore the deleted student record first.')
                 active=action=='reactivate'
                 if control.active!=active:
                     control.active=active;control.revision+=1;control.reason=reason
@@ -221,7 +249,7 @@ def install(app,db,m,h):
             elif action in ('approve_enrollment','revoke_access','verify_and_approve'):
                 enrollment=db.get_or_404(Enrollment,request.form.get('enrollment_id',type=int))
                 if enrollment.student_id!=student.id:abort(403)
-                if action=='revoke_access':enrollment.status='revoked'
+                if action=='revoke_access':app.extensions['student_management']['hold'](enrollment)
                 else:
                     if action=='verify_and_approve':
                         if request.form.get('funds_confirmed')!='yes' or not enrollment.payment_reference or enrollment.payment_status not in ('submitted','verified'):abort(400,'Confirm receipt of funds against the student payment reference before approval.')

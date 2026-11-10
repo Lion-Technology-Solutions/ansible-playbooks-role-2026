@@ -88,7 +88,7 @@ def install(app,db,m,h):
         return complete(row,token)
     def begin(student,send_verification=False,next_enrollment=None):
         control=db.session.get(m['StudentControl'],student.id)
-        if control and not control.active:
+        if (control and not control.active) or db.session.get(m['StudentArchive'],student.id):
             session.clear();flash('This account is deactivated. Contact portal support.');return redirect(url_for('login'))
         p=profile(student);token=secrets.token_urlsafe(32)
         row=Login(digest=digest(token),student_id=student.id,stamp=stamp(student),version=p.security_version,expires_at=now()+timedelta(minutes=15),next_enrollment_id=next_enrollment)

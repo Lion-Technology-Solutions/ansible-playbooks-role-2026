@@ -251,10 +251,17 @@ def install(app,db,m,h):
                 db.session.rollback();flash('Enter your own WhatsApp number with country code, for example +14375550123.');return redirect(url_for('connected_accounts'))
             alerts.enabled=enabled
             if enabled:alerts.phone=phone;alerts.consented_at=now()
+            payment=db.session.get(m['TuitionWhatsAppPreference'],g.student.id) or m['TuitionWhatsAppPreference'](student_id=g.student.id,phone='')
+            payment.enabled=request.form.get('payment_whatsapp')=='yes'
+            if payment.enabled:
+                if not re.fullmatch(r'\+[1-9][0-9]{6,14}',phone):
+                    db.session.rollback();flash('Enter your own WhatsApp number with country code.');return redirect(url_for('connected_accounts'))
+                payment.phone=phone;payment.consented_at=now()
+            db.session.add(payment)
             db.session.add(alerts);db.session.commit();flash('Class reminder preference saved.')
             return redirect(url_for('connected_accounts'))
         pref=db.session.get(Preference,g.student.id)
-        return render_template('connected_accounts.html',providers=[(provider,CATALOG[provider],connection_status(provider),ready(provider)) for provider in ('google','microsoft')],reminders=pref.reminders if pref else True,whatsapp_pref=db.session.get(m['ClassWhatsAppPreference'],g.student.id))
+        return render_template('connected_accounts.html',providers=[(provider,CATALOG[provider],connection_status(provider),ready(provider)) for provider in ('google','microsoft')],reminders=pref.reminders if pref else True,whatsapp_pref=db.session.get(m['ClassWhatsAppPreference'],g.student.id),payment_whatsapp_pref=db.session.get(m['TuitionWhatsAppPreference'],g.student.id))
 
     @app.post('/connections/<provider>/start')
     @student_required()

@@ -96,6 +96,42 @@ class StudentControl(db.Model):
     reviewed_at=db.Column(db.DateTime(timezone=True))
 
 
+class StudentArchive(db.Model):
+    __tablename__='portal_student_archives'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    deleted_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+    reason=db.Column(db.String(500),nullable=False,default='')
+
+
+class TuitionControl(db.Model):
+    __tablename__='portal_tuition_controls'
+    enrollment_id=db.Column(db.Integer,db.ForeignKey('portal_enrollments.id'),primary_key=True)
+    status=db.Column(db.String(20),nullable=False,default='pending')
+    access_hold=db.Column(db.Boolean,nullable=False,default=False)
+    source=db.Column(db.String(20),nullable=False,default='admin')
+    reason=db.Column(db.String(500),nullable=False,default='')
+    revision=db.Column(db.Integer,nullable=False,default=0)
+    updated_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+
+
+class StudentManagementAudit(db.Model):
+    __tablename__='portal_student_management_audit'
+    id=db.Column(db.Integer,primary_key=True)
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),nullable=False)
+    enrollment_id=db.Column(db.Integer,db.ForeignKey('portal_enrollments.id'))
+    action=db.Column(db.String(40),nullable=False)
+    detail=db.Column(db.String(1000),nullable=False,default='')
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+
+
+class TuitionWhatsAppPreference(db.Model):
+    __tablename__='portal_tuition_whatsapp_preferences'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    phone=db.Column(db.String(20),nullable=False)
+    enabled=db.Column(db.Boolean,nullable=False,default=False)
+    consented_at=db.Column(db.DateTime(timezone=True))
+
+
 class ProfilePicture(db.Model):
     __tablename__='portal_profile_pictures'
     owner=db.Column(db.String(50),primary_key=True)
@@ -919,7 +955,7 @@ def create_app(config=None):
         student = db.session.get(Student, session.get('student_id')) if session.get('student_id') else None
         if student:
             control=db.session.get(StudentControl,student.id)
-            if control and not control.active:session.clear();student=None
+            if (control and not control.active) or db.session.get(StudentArchive,student.id):session.clear();student=None
         if student:
             token = hmac.new(app.secret_key.encode(), student.password_hash.encode(), 'sha256').hexdigest()
             if hmac.compare_digest(token.encode(), session.get('student_auth', '').encode()):
@@ -1096,6 +1132,11 @@ def create_app(config=None):
         if (program and not program.isdigit()) or (country and country not in COUNTRIES) or (year and (not year.isdigit() or not 2000<=int(year)<=2100)) or currency not in CURRENCIES:abort(400)
         query=select(Enrollment).join(Student,Student.id==Enrollment.student_id)
         accounts=select(Student)
+        archived=select(StudentArchive.student_id)
+        if request.args.get('archived')=='yes':
+            query=query.where(Student.id.in_(archived));accounts=accounts.where(Student.id.in_(archived))
+        else:
+            query=query.where(~Student.id.in_(archived));accounts=accounts.where(~Student.id.in_(archived))
         if program:
             query=query.where(Enrollment.course_id==int(program))
             accounts=accounts.where(Student.id.in_(select(Enrollment.student_id).where(Enrollment.course_id==int(program))))
@@ -1862,7 +1903,7 @@ def create_app(config=None):
         view=request.args.get('view','dashboard')
         if view not in ('dashboard','students','enrollments','payments','programs','classes','materials','announcements','reports','settings'):abort(404)
         return render_template('admin.html', admin_view=view,overview=admin_overview(),prices=db.session.scalars(select(CoursePrice)).all(),
-            certificates=db.session.scalars(select(Certificate)).all(),next_dates=next_start_dates(), students=db.session.scalars(select(Student).order_by(Student.created_at.desc())).all(),
+            certificates=db.session.scalars(select(Certificate)).all(),next_dates=next_start_dates(), students=db.session.scalars(select(Student).where(Student.id.in_(select(StudentArchive.student_id)) if request.args.get('archived')=='yes' else ~Student.id.in_(select(StudentArchive.student_id))).order_by(Student.created_at.desc())).all(),
             lessons=db.session.scalars(select(Lesson).order_by(Lesson.course_id,Lesson.position,Lesson.id)).all(),
             lesson_assets=db.session.scalars(select(Asset).where(Asset.ready.is_(True),Asset.archived.is_(False),Asset.purpose=='lesson').order_by(Asset.created_at.desc())).all(),
             branding_assets=db.session.scalars(select(Asset).where(Asset.ready.is_(True),Asset.archived.is_(False),Asset.purpose=='branding').order_by(Asset.created_at.desc())).all(),
@@ -1895,6 +1936,8 @@ def create_app(config=None):
     app.extensions['admin_security']=install_account_security(app,db,globals(),dict(admin_required=admin_required,student_required=student_required))
     from lifecycle_notifications import install as install_notifications
     app.extensions['notifications']=install_notifications(app,db,globals(),dict(admin_required=admin_required,confirm_enrollment=confirm_enrollment))
+    from student_management import install as install_student_management
+    app.extensions['student_management']=install_student_management(app,db,globals(),dict(admin_required=admin_required,notify=notify,confirm_enrollment=confirm_enrollment))
     from chatgpt_bridge import install as install_bridge
     app.extensions['chatgpt_bridge']=install_bridge(app,db,globals(),dict(admin_required=admin_required))
     from portal_languages import install as install_languages

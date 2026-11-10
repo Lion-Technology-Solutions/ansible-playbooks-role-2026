@@ -1,4 +1,4 @@
-{% set unlocked=e.course_id in paid_course_ids %}
+{% if tuition_record(e) %}<p class="notice">Tuition: {{ tuition_status(e)|title }}. {{ 'Your course access is paused. Review payments or contact support.' if tuition_status(e) in ('overdue','pending') else 'Your tuition eligibility is confirmed.' }}</p>{% endif %}{% set unlocked=e.course_id in paid_course_ids %}
 <article class="panel" id="enrollment-{{ e.id }}">
   <div class="heading-row"><h3>{{ e.course.name }}</h3><span class="status {{ 'success' if unlocked else 'pending' }}">{{ 'Enrollment confirmed' if unlocked else ('Follow-up needed' if e.status=='rejected' else 'Enrollment pending payment confirmation') }}</span></div>
   {% if e.cohort %}<p><strong>Your batch starts:</strong> {{ e.cohort.start_date.strftime('%A, %B %d, %Y') }}</p>{% endif %}

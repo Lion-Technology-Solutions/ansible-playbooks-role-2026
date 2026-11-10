@@ -1,0 +1,25 @@
+{% from 'macros.html' import token with context %}
+{% macro actions(student,enrollment=none) %}
+{% set archived=student_archived(student) %}
+<div class="student-admin-actions">
+<a class="button outline compact" href="{{ url_for('account_review',student_id=student.id) }}">View record</a>
+{% if not archived and student_whatsapp(student) %}<a class="button outline compact" href="{{ student_whatsapp(student) }}" target="_blank" rel="noopener">Open WhatsApp ↗</a>{% endif %}
+<details><summary class="button blue compact">Manage student</summary>
+<form method="post" action="{{ url_for('student_manage',student_id=student.id) }}">{{ token() }}
+{% if enrollment %}<input type="hidden" name="enrollment_id" value="{{ enrollment.id }}">{% endif %}
+<label>Action<select name="action">{% if archived %}<option value="restore">Restore deleted record (keeps account suspended)</option>{% else %}<option value="approve">Approve account review</option>{% if enrollment %}<option value="approve_existing">Approve existing student / grant this program</option><option value="revoke">Revoke this program access</option><option value="whatsapp_notice">Send tuition-status WhatsApp alert</option>{% endif %}<option value="suspend">Suspend account — all programs</option><option value="reactivate">Reactivate account</option><option value="delete">Delete account (recoverable)</option>{% endif %}</select></label>
+<label>Reason / existing tuition record note<textarea name="reason" maxlength="500" rows="2"></textarea></label>
+{% if enrollment and not archived %}<label class="radio-label"><input type="checkbox" name="records_confirmed" value="yes">I verified the existing student’s tuition record and authorize program access.</label>{% endif %}
+{% if not archived %}<label>To delete, enter student number<input name="confirm_number" placeholder="{{ student.student_number }}" maxlength="40"></label>{% endif %}
+<label>Current admin password<input name="admin_password" type="password" autocomplete="current-password" required></label>
+<button class="button blue compact">Apply action</button>
+</form></details>
+{% if not archived %}<details><summary class="button outline compact">Send email</summary><form method="post" action="{{ url_for('student_manage',student_id=student.id) }}">{{ token() }}<input type="hidden" name="action" value="email"><p>To: {{ student.email }}</p><label>Subject<input name="subject" maxlength="160" required></label><label>Message<textarea name="body" maxlength="10000" rows="4" required></textarea></label><label>Current admin password<input name="admin_password" type="password" autocomplete="current-password" required></label><button class="button blue compact">Queue email</button></form></details>{% endif %}
+</div>
+{% endmacro %}
+{% macro tuition_form(e) %}
+{% set state=tuition_status(e) %}{% set record=tuition_record(e) %}
+<span class="pill {{ 'pill-green' if state in ('current','completed') else 'pill-yellow' }}">{{ state|title }}</span>
+<p class="muted">{{ 'Account suspended' if not student_active(e.student) else ('Access granted' if e.status=='approved' and e.payment_status=='verified' else 'Access not granted') }}{% if record and record.access_hold %} · Manual access hold{% endif %}</p>
+{% if not student_archived(e.student) %}<details><summary>Update tuition status</summary><form method="post" action="{{ url_for('student_manage',student_id=e.student_id) }}">{{ token() }}<input type="hidden" name="action" value="tuition"><input type="hidden" name="enrollment_id" value="{{ e.id }}"><label>Tuition status<select name="tuition_status">{% for value,label in [('pending','Pending — access paused'),('current','Current — grant access'),('completed','Completed — grant access'),('overdue','Overdue — revoke access')] %}<option value="{{ value }}"{% if state==value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><label>Record / reconciliation note<textarea name="reason" maxlength="500" rows="2" required></textarea></label><label class="radio-label"><input type="checkbox" name="records_confirmed" value="yes">I verified tuition eligibility for Current / Completed. This does not record a cash transaction.</label><label>Current admin password<input name="admin_password" type="password" autocomplete="current-password" required></label><button class="button blue compact">Save tuition &amp; update access</button></form></details>{% endif %}
+{% endmacro %}
