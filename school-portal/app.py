@@ -87,6 +87,35 @@ class AuthPolicy(db.Model):
     revision=db.Column(db.Integer,nullable=False,default=1)
 
 
+class PortalAccessKey(db.Model):
+    __tablename__='portal_access_keys'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    label=db.Column(db.String(100),nullable=False)
+    digest=db.Column(db.String(64),unique=True,nullable=False)
+    admin_stamp=db.Column(db.String(64),nullable=False)
+    can_write=db.Column(db.Boolean,nullable=False,default=False)
+    revoked=db.Column(db.Boolean,nullable=False,default=False)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+    expires_at=db.Column(db.DateTime(timezone=True),nullable=False)
+    last_used_at=db.Column(db.DateTime(timezone=True))
+
+
+class PortalTranslation(db.Model):
+    __tablename__='portal_translations'
+    key=db.Column(db.String(64),primary_key=True)
+    language=db.Column(db.String(2),nullable=False)
+    source=db.Column(db.Text,nullable=False)
+    translated=db.Column(db.Text,nullable=False)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+
+
+class TranslationUsage(db.Model):
+    __tablename__='portal_translation_usage'
+    id=db.Column(db.Integer,primary_key=True)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now,index=True)
+    actor=db.Column(db.String(64),nullable=False,index=True)
+
+
 class PolicyAcceptance(db.Model):
     __tablename__ = 'portal_policy_acceptances'
     student_id = db.Column(db.String(36), db.ForeignKey('portal_students.id'), primary_key=True)
@@ -849,7 +878,7 @@ def create_app(config=None):
             admin_token = hmac.new(app.secret_key.encode(), app.config['ADMIN_PASSWORD'].encode(), 'sha256').hexdigest()
             if not hmac.compare_digest(admin_token.encode(), session.get('admin_auth', '').encode()):
                 session.clear()
-        if request.method == 'POST' and request.endpoint != 'stripe_webhook':
+        if request.method == 'POST' and request.endpoint not in ('stripe_webhook','chatgpt_context','chatgpt_draft','chatgpt_apply'):
             if request.endpoint == 'manual_fee':
                 request.max_content_length = 2*1024*1024+8192
             if request.endpoint == 'asset_chunk':
@@ -884,7 +913,7 @@ def create_app(config=None):
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings') and bool(g.student or session.get('admin')))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings') and bool(g.student or session.get('admin')))
 
     def student_required():
         def decorate(fn):
@@ -1798,6 +1827,10 @@ def create_app(config=None):
     app.extensions['assistant']=install_assistant(app,db,globals(),dict(admin_required=admin_required,student_required=student_required))
     from auth_security import install as install_security
     app.extensions['auth_security']=install_security(app,db,globals(),dict(admin_required=admin_required))
+    from chatgpt_bridge import install as install_bridge
+    app.extensions['chatgpt_bridge']=install_bridge(app,db,globals(),dict(admin_required=admin_required))
+    from portal_languages import install as install_languages
+    app.extensions['portal_languages']=install_languages(app,db,globals())
     return app
 
 

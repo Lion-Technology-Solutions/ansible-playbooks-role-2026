@@ -313,4 +313,4 @@ def install(app,db,m,h):
         # Existing handler validation and commit make consumption atomic with the real change.
         draft.status='applied';db.session.add(M('IntegrationAudit')(provider='openai',action=draft.action,status='admin_confirmed'))
 
-    return dict(probe=probe,confirm_submission=confirm_submission,context=context)
+    return dict(probe=probe,confirm_submission=confirm_submission,context=context,base_fields=base_fields,fingerprint=fingerprint)
