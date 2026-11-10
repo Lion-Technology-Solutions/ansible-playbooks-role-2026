@@ -87,7 +87,7 @@ def install(app,db,m,h):
         db.session.add(row);db.session.commit();session.clear();session['pending_auth']=token;session['csrf']=secrets.token_hex(24)
         if send_verification and needs_email(student):
             try:send_verification_email(student,row)
-            except Exception:flash('Your account was saved, but the verification email could not be queued. Try Resend code or contact support.')
+            except Exception:flash('Your account was saved, but the verification email could not be sent. Try Resend code or contact support.')
         return advance(row,token)
     def actor(verified_email=True):
         row=current() if g.student else pending()
@@ -111,30 +111,50 @@ def install(app,db,m,h):
         try:return load_challenge(identity,purpose,student,binding)
         except ValueError:abort(400,'This setup expired or was already used. Return to Account security and start again.')
     def failed_challenge(row):row.attempts+=1;db.session.commit()
-    def queue_mail(student,subject,body):
-        row=Mail(id=secrets.token_hex(16),ciphertext='');row.ciphertext=service['seal']('auth_mail',row.id,dict(to=student.email,subject=subject,body=body))
+    def queue_mail(student,subject,body,challenge_id=None):
+        row=Mail(id=secrets.token_hex(16),ciphertext='')
+        row.ciphertext=service['seal']('auth_mail',row.id,dict(to=student.email,subject=subject,body=body,challenge_id=challenge_id))
         db.session.add(row);db.session.commit()
+        publisher=app.config.get('SECURITY_MAIL_PUBLISH')
+        if publisher:
+            # Explicit test/transport override; production sends security mail immediately.
+            publisher(row.id)
+            return row
         try:
-            publisher=app.config.get('SECURITY_MAIL_PUBLISH')
-            if publisher:publisher(row.id)
-            else:
-                from integration_jobs import publish
-                publish({'kind':'security_email','id':row.id,'run':secrets.token_hex(12)})
+            process_mail(row.id)
+            return row
+        except Exception:
+            app.logger.warning('Security email direct handoff failed; scheduling retry.')
+        try:
+            from integration_jobs import publish
+            publish({'kind':'security_email','id':row.id,'run':secrets.token_hex(12)})
+            row.status='retry_queued';db.session.commit()
         except Exception:
             row.status='queue_failed';db.session.commit()
+            app.logger.error('Security email retry could not be queued.')
+            raise RuntimeError('Security email is unavailable.') from None
         return row
     def process_mail(identity):
         row=db.session.scalar(select(Mail).where(Mail.id==identity).with_for_update())
-        if not row or row.status=='sent':return
-        if aware(row.created_at)<now()-timedelta(minutes=30):row.status='expired';row.ciphertext='';db.session.commit();return
+        if not row or row.status in ('sent','expired'):return
+        data=service['unseal']('auth_mail',row.id,row.ciphertext)
+        linked=db.session.get(Challenge,data['challenge_id']) if data.get('challenge_id') else None
+        stale=bool(data.get('challenge_id') and (not linked or linked.consumed or aware(linked.expires_at)<=now()))
+        legacy_minutes=10 if data.get('subject')=='Verify your LionTech Academy email' else 30
+        if stale or aware(row.created_at)<now()-timedelta(minutes=legacy_minutes):
+            row.status='expired';row.ciphertext='';db.session.commit();return
         if row.attempts>=5:return
-        row.attempts+=1;db.session.commit()
+        row.attempts+=1
         try:
             if not service['ready']('email'):raise ValueError()
-            values=service['config']('email');data=service['unseal']('auth_mail',row.id,row.ciphertext)
+            values=service['config']('email')
             transport('https://api.sendgrid.com/v3/mail/send','POST',{'personalizations':[{'to':[{'email':data['to']}]}],'from':{'email':values['SENDGRID_FROM_EMAIL']},'subject':data['subject'],'content':[{'type':'text/plain','value':data['body']}]},{'Authorization':'Bearer '+values['SENDGRID_API_KEY']})
             row.status='sent';row.ciphertext='';db.session.commit()
-        except Exception:row.status='failed';db.session.commit();raise RuntimeError('Security email delivery unavailable.') from None
+            app.logger.info('Security email accepted by provider.')
+        except Exception:
+            row.status='failed';db.session.commit()
+            app.logger.warning('Security email provider handoff failed.')
+            raise RuntimeError('Security email delivery unavailable.') from None
     def send_verification_email(student,row):
         limit('email-send:'+student.id,3,15)
         code=f'{secrets.randbelow(1000000):06d}'
@@ -142,7 +162,9 @@ def install(app,db,m,h):
         for item in old:item.consumed=True
         record,_=challenge(student,'email',row.digest,dict(code=mac('email:'+student.id+':'+code)),10)
         session['email_challenge']=record.id
-        queue_mail(student,'Verify your LionTech Academy email',f'Hello {student.name},\nYour verification code is {code}. It expires in 10 minutes.\nStudent number: {student.student_number}\nIf you did not request this, ignore this message.')
+        delivery=queue_mail(student,'Verify your LionTech Academy email',f'Hello {student.name},\nYour verification code is {code}. It expires in 10 minutes.\nStudent number: {student.student_number}\nIf you did not request this, ignore this message.',challenge_id=record.id)
+        session['verification_mail']=delivery.id
+        return delivery
     def recovery_codes(student):
         db.session.query(Recovery).filter_by(student_id=student.id).delete(synchronize_session=False)
         codes=[secrets.token_hex(8).upper() for _ in range(10)]
@@ -203,8 +225,10 @@ def install(app,db,m,h):
         student,row=actor(False)
         if request.method=='POST':
             if request.form.get('action')=='resend':
-                try:send_verification_email(student,row);flash('Verification email queued. Check your inbox and spam folder.')
-                except Exception:flash('The verification email could not be queued. Check with support or retry later.')
+                try:
+                    delivery=send_verification_email(student,row)
+                    flash('Verification email accepted by the email provider. Check your inbox and spam folder.' if delivery.status=='sent' else 'Email provider handoff is pending. A retry is queued; use Resend code if it does not arrive shortly.')
+                except Exception:flash('The verification email could not be sent. Check with support or retry later.')
                 return redirect(url_for('verify_email'))
             limit('email-check:'+student.id,10)
             try:
@@ -213,7 +237,8 @@ def install(app,db,m,h):
                 record.consumed=True;p=profile(student);p.email_verified_at=now();p.activated_at=p.activated_at or now();audit('email_verified');db.session.commit()
                 return advance(row,session.get('pending_auth') or session['auth_session'])
             except ValueError as error:db.session.rollback();flash(str(error))
-        return render_template('verify_email.html',email=student.email,student_number=student.student_number)
+        delivery=db.session.get(Mail,session.get('verification_mail')) if session.get('verification_mail') else None
+        return render_template('verify_email.html',email=student.email,student_number=student.student_number,mail_status=delivery.status if delivery else None)
 
     @app.route('/password/forgot',methods=['GET','POST'])
     def forgot_password():
@@ -226,7 +251,7 @@ def install(app,db,m,h):
                 if student and student.email==email:
                     try:
                         record,token=challenge(student,'reset','',{},30)
-                        queue_mail(student,'Reset your LionTech Academy password',f'Use this single-use link within 30 minutes:\n{ORIGIN}/password/reset?token={token}\nStudent number: {student.student_number}\nPassword resets keep your two-factor authentication enabled. If you did not request this, ignore this message.')
+                        queue_mail(student,'Reset your LionTech Academy password',f'Use this single-use link within 30 minutes:\n{ORIGIN}/password/reset?token={token}\nStudent number: {student.student_number}\nPassword resets keep your two-factor authentication enabled. If you did not request this, ignore this message.',challenge_id=record.id)
                     except Exception:db.session.rollback()
             return render_template('forgot_password.html',sent=True)
         return render_template('forgot_password.html',sent=False)

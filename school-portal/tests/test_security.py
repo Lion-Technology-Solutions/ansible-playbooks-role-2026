@@ -340,3 +340,66 @@ def test_domain_migration_keeps_old_passkeys_bound_to_original_host(app):
     assert result.status_code==200 and result.json['rpId']==urlsplit(LEGACY_ORIGIN).hostname
     hostile=app.test_client();sign_in(hostile,'https://untrusted.example');csrf_value=token(hostile,'/account/security/challenge','https://untrusted.example')
     assert hostile.post('/account/security/passkey/options',base_url='https://untrusted.example',data={'csrf':csrf_value,'mode':'authenticate'}).status_code==400
+
+
+def prepare_immediate_email(app):
+    manager,student=setup(app)
+    app.config['INTEGRATION_HTTP']=http_ok
+    configure(app,manager,'email',{'SENDGRID_API_KEY':'unit-sendgrid-key','SENDGRID_FROM_EMAIL':'verified@example.com'})
+    configure(app,manager,'email',action='test')
+    app.config.pop('SECURITY_MAIL_PUBLISH',None)
+    return student
+
+
+def test_security_email_direct_handoff_does_not_wait_for_queue(app,monkeypatch):
+    student=prepare_immediate_email(app);calls=[]
+    app.config['AUTH_HTTP']=lambda *a,**k:calls.append(a) or {}
+    monkeypatch.setattr('integration_jobs.publish',lambda payload:(_ for _ in ()).throw(AssertionError('No queue on successful direct handoff')))
+    response=register(student)
+    assert b'Email accepted by the provider' in response.data and len(calls)==1
+    with app.app_context():
+        row=db.session.scalar(select(AuthMail));assert row.status=='sent' and row.attempts==1 and row.ciphertext==''
+    code=re.search(r'code is (\d{6})',calls[0][2]['content'][0]['value'])[1]
+    response=student.post('/verify-email',data={'csrf':csrf(student,'/verify-email'),'code':code},follow_redirects=True)
+    assert b'Welcome' in response.data
+
+
+def test_security_email_failed_direct_handoff_queues_retry(app,monkeypatch):
+    student=prepare_immediate_email(app);queued=[]
+    app.config['AUTH_HTTP']=lambda *a,**k:(_ for _ in ()).throw(TimeoutError())
+    monkeypatch.setattr('integration_jobs.publish',lambda payload:queued.append(payload))
+    response=register(student)
+    assert b'Email delivery is delayed' in response.data and len(queued)==1
+    assert set(queued[0])=={'kind','id','run'}
+    with app.app_context():
+        row=db.session.scalar(select(AuthMail));assert row.status=='retry_queued' and row.attempts==1 and row.ciphertext
+    calls=[];app.config['AUTH_HTTP']=lambda *a,**k:calls.append(a) or {}
+    with app.test_request_context('/internal/security-worker'):
+        app.extensions['auth_security']['process_mail'](queued[0]['id'])
+        assert db.session.get(AuthMail,queued[0]['id']).status=='sent'
+    assert len(calls)==1
+
+
+def test_expired_and_superseded_codes_are_not_sent_from_retry_queue(app):
+    manager,student=setup(app);register(student)
+    with app.app_context():
+        first=db.session.scalar(select(AuthMail.id));ch=db.session.scalar(select(AuthChallenge).where(AuthChallenge.purpose=='email'));ch.expires_at=now()-timedelta(seconds=1);db.session.commit()
+    app.config['AUTH_HTTP']=lambda *a,**k:(_ for _ in ()).throw(AssertionError('Do not send expired code'))
+    with app.test_request_context('/internal/security-worker'):
+        app.extensions['auth_security']['process_mail'](first)
+        row=db.session.get(AuthMail,first);assert row.status=='expired' and row.ciphertext=='' and row.attempts==0
+    student.post('/verify-email',data={'csrf':csrf(student,'/verify-email'),'action':'resend'})
+    with app.app_context():second=db.session.scalar(select(AuthMail.id).where(AuthMail.id!=first))
+    student.post('/verify-email',data={'csrf':csrf(student,'/verify-email'),'action':'resend'})
+    with app.test_request_context('/internal/security-worker'):
+        app.extensions['auth_security']['process_mail'](second)
+        row=db.session.get(AuthMail,second);assert row.status=='expired' and row.ciphertext==''
+
+
+def test_security_email_failed_direct_and_queue_reports_failure(app,monkeypatch):
+    student=prepare_immediate_email(app)
+    app.config['AUTH_HTTP']=lambda *a,**k:(_ for _ in ()).throw(TimeoutError())
+    monkeypatch.setattr('integration_jobs.publish',lambda payload:(_ for _ in ()).throw(TimeoutError()))
+    response=register(student)
+    assert b'verification email could not be sent' in response.data
+    with app.app_context():assert db.session.scalar(select(AuthMail)).status=='queue_failed'
