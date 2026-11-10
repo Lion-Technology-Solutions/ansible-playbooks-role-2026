@@ -502,6 +502,7 @@ def install(app,db,m,h):
         if request.method=='POST':
             limit('social-signup:'+client_address(),10)
             try:
+                m['require_policy_acknowledgment']()
                 record,values=load_challenge(record.id,'social_signup');info=values['info']
                 name=request.form.get('name','').strip();email=request.form.get('email','').strip().lower();country=request.form.get('country');phone=request.form.get('phone','').strip()
                 if not 1<=len(name)<=100 or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email) or len(email)>254 or country not in m['COUNTRIES'] or not 1<=len(phone)<=40:raise ValueError('Complete your name, email, residence and phone number.')
@@ -515,6 +516,7 @@ def install(app,db,m,h):
                     course=db.get_or_404(m['Course'],application.get('course_id'));cohort=db.get_or_404(m['Cohort'],application.get('cohort_id'))
                     if not course.publication.published or cohort.course_id!=course.id or cohort.start_date not in m['next_start_dates']():raise ValueError('Choose a current program and batch before creating your account.')
                     enrollment=m['Enrollment'](student_id=student.id,course_id=course.id,cohort_id=cohort.id);db.session.add(enrollment)
+                m['record_policy_acceptance'](student,provider)
                 db.session.add(Social(provider=provider,subject=info['subject'],student_id=student.id));record.consumed=True;db.session.commit()
                 return begin(student,send_verification=True,next_enrollment=enrollment.id if enrollment else None)
             except (ValueError,IntegrityError) as error:db.session.rollback();flash(str(error) if isinstance(error,ValueError) else 'An account already uses those details. Sign in or contact support.')

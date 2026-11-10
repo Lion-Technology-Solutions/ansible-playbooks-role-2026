@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
 from werkzeug.security import check_password_hash, generate_password_hash
 from vercel.blob import BlobError
+from legal_content import POLICY_VERSION, EFFECTIVE_DATE, TERMS, PRIVACY
 from providers import ORIGIN
 from file_storage import CHUNK_SIZE, FORM_LIMIT, PrivateBlobStorage, byte_range, validate_upload, validate_image
 from localization import COUNTRIES, LEGACY_COUNTRIES, COUNTRY_META, residence, formatted, converted, fetch_rates
@@ -84,6 +85,23 @@ class AuthPolicy(db.Model):
     require_mfa=db.Column(db.Boolean,nullable=False,default=True)
     grace_days=db.Column(db.Integer,nullable=False,default=7)
     revision=db.Column(db.Integer,nullable=False,default=1)
+
+
+class PolicyAcceptance(db.Model):
+    __tablename__ = 'portal_policy_acceptances'
+    student_id = db.Column(db.String(36), db.ForeignKey('portal_students.id'), primary_key=True)
+    version = db.Column(db.String(30), primary_key=True)
+    accepted_at = db.Column(db.DateTime(timezone=True), nullable=False, default=now)
+    method = db.Column(db.String(20), nullable=False)
+
+
+def require_policy_acknowledgment():
+    if request.form.get('policy_acknowledged') != 'yes' or request.form.get('policy_version') != POLICY_VERSION:
+        raise ValueError('Read and acknowledge the current Terms of Service and Privacy Policy before creating your account.')
+
+
+def record_policy_acceptance(student, method):
+    db.session.add(PolicyAcceptance(student_id=student.id, version=POLICY_VERSION, method=method))
 
 
 class AuthProfile(db.Model):
@@ -1252,11 +1270,24 @@ def create_app(config=None):
     def update_preview(update_id):
         return render_template('update_page.html', item=db.get_or_404(PublicUpdate, update_id), preview=True)
 
+    @app.get('/terms')
+    def terms_of_service():
+        return render_template('legal.html', title='Terms of Service', sections=TERMS, version=POLICY_VERSION, effective=EFFECTIVE_DATE)
+
+    @app.get('/privacy')
+    def privacy_policy():
+        return render_template('legal.html', title='Privacy Policy', sections=PRIVACY, version=POLICY_VERSION, effective=EFFECTIVE_DATE)
+
+    @app.context_processor
+    def legal_context():
+        return dict(policy_version=POLICY_VERSION)
+
     @app.route('/register', methods=['GET', 'POST'])
     def register():
         if request.method == 'POST':
             app.extensions['auth_security']['registration_limit']()
             try:
+                require_policy_acknowledgment()
                 name, email = field('name'), field('email', 254).lower()
                 phone, country, kind = field('phone', 40), field('country', 80), field('kind', 12)
                 password = request.form.get('password', '')
@@ -1279,6 +1310,7 @@ def create_app(config=None):
                 db.session.flush()
                 db.session.add(StudentIdentity(student_id=student.id))
                 app.extensions['auth_security']['new_profile'](student,request.form.get('username',''))
+                record_policy_acceptance(student, 'password')
                 db.session.add(AccountRequest(student_id=student.id))
                 db.session.add(StudentPreference(student_id=student.id,language=language,timezone=residence(country)['timezone']))
                 enrollment=None

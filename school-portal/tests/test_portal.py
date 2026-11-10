@@ -12,6 +12,9 @@ def csrf(client, path='/login'):
 
 
 def post(client, path, **fields):
+    if path == '/register':
+        from legal_content import POLICY_VERSION
+        fields.setdefault('policy_acknowledged', 'yes');fields.setdefault('policy_version', POLICY_VERSION)
     page = '/admin' if path.startswith('/admin') else ('/register' if path == '/register' else '/enrollments')
     if path.startswith('/enrollment/') and path.endswith('/payment') and 'student_number' not in fields:
         match=re.search(rb'LT-\d{4}-\d{6,}',client.get('/portal').data)

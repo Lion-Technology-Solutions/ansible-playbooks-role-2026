@@ -229,7 +229,10 @@ def test_facebook_new_account_requires_independent_email_verification(app):
     manager,student=setup(app);enable_social(app,manager,'facebook')
     app.config['SOCIAL_EXCHANGE']=lambda *a:{'subject':'facebook-new-id','name':'New user','email':'new@example.com','verified':False}
     state=social_start(student,'facebook');page=student.get('/auth/facebook/callback?state='+state+'&code=abc',follow_redirects=True);assert b'Complete your LionTech profile' in page.data
-    page=student.post('/auth/complete',data={'csrf':csrf(student,'/auth/complete'),'name':'New user','email':'new@example.com','username':'new-social','country':'Canada','phone':'+14375551234'},follow_redirects=True)
+    denied=student.post('/auth/complete',data={'csrf':csrf(student,'/auth/complete'),'name':'New user','email':'new@example.com','username':'new-social','country':'Canada','phone':'+14375551234'},follow_redirects=True)
+    assert b'Read and acknowledge the current' in denied.data
+    with app.app_context():assert not db.session.scalar(select(Student))
+    page=student.post('/auth/complete',data={'csrf':csrf(student,'/auth/complete'),'policy_acknowledged':'yes','policy_version':__import__('legal_content').POLICY_VERSION,'name':'New user','email':'new@example.com','username':'new-social','country':'Canada','phone':'+14375551234'},follow_redirects=True)
     assert b'Check your email' in page.data and student.get('/portal').status_code==302
     activate(app,student)
     assert student.get('/portal').status_code==200

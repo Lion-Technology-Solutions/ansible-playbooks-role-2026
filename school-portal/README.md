@@ -260,3 +260,13 @@ Tests exercise verified activation, the seven-day gate, preserved payment access
 Production domain: `https://www.liontechacademy.com` is attached to the student-portal Vercel project. Canonical OAuth callbacks, Stripe checkout return/webhook setup links, calendar descriptions, class emails and password-reset links use this address. The bare `liontechacademy.com` remains on its existing separate project. The original `liontech-student-portal.vercel.app` continues serving the portal. Cookies are host-only, so a new address requires a new sign-in. Google/Facebook and calendar provider callback registrations must use the new canonical address before enabling those connections. Update any existing Stripe webhook endpoint in Stripe to `https://www.liontechacademy.com/webhooks/stripe`.
 
 Passkeys have exact hostname/RP bindings. New registrations use the current allowlisted hostname: `www.liontechacademy.com` or the original Vercel hostname. Previously stored credentials without RP metadata are treated as original-host credentials and remain usable there. A challenge records its exact expected origin/RP and cannot be replayed across the two hosts. A legacy passkey cannot be used directly on the new hostname; use a recovery code, SMS or TOTP there, then register a new passkey. Preview and unrelated Host headers cannot create a passkey ceremony. The public canonical OAuth origin is fixed rather than inferred from request headers.
+
+
+## Public terms and privacy
+
+- Terms: https://www.liontechacademy.com/terms
+- Privacy: https://www.liontechacademy.com/privacy
+- Complete versioned text is maintained in `legal_content.py`; bump `POLICY_VERSION` when publishing changes.
+- Password and social account creation require an unchecked acknowledgment and the current version. The server rejects absent or stale acknowledgments before creating a student.
+- `portal_policy_acceptances` is an additive table recording student, version, acceptance time and registration method in the account creation transaction. Existing accounts are not backfilled with invented consent.
+- Optional marketing, AI use and calendar authorization remain separate choices. Public policy pages and footer links are accessible without signing in.
