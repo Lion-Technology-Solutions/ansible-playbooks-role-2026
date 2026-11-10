@@ -235,3 +235,14 @@ def test_actual_generation_probe_uses_schema_without_student_context_and_require
     def fail(*args):raise HTTPError('https://api.openai.com/v1/responses',429,'',{},io.BytesIO(b'{"error":{"code":"insufficient_quota"}}'))
     app.config['OPENAI_REQUEST']=fail
     result=configure(app,manager,'openai',action='test_generation');assert b'no available API quota' in result.data
+
+
+
+def test_current_quota_codes_and_unknown_429_are_not_mislabeled_as_temporary_rate_limits():
+    import io
+    from urllib.error import HTTPError
+    from portal_assistant import request_failure
+    for code,category in [('credit_balance_exhausted','quota_exhausted'),('project_spend_limit_exceeded','spend_limit'),('organization_spend_limit_exceeded','spend_limit'),('organization_usage_limit_exceeded','usage_limit'),('slow_down','rate_limited'),('future_unknown_code','limit_unknown')]:
+        error=HTTPError('https://api.openai.com/v1/responses',429,'',{},io.BytesIO(json.dumps({'error':{'code':code}}).encode()))
+        assert request_failure(error).category==category
+    assert request_failure(HTTPError('https://api.openai.com/v1/responses',429,'',{},io.BytesIO(b'not-json'))).category=='limit_unknown'

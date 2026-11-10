@@ -45,12 +45,19 @@ def request_failure(error):
             detail=json.loads(error.read(65536)).get('error',{})
             code=detail.get('code');param=detail.get('param')
         except Exception:pass
-        if code in ('insufficient_quota','billing_hard_limit_reached','billing_not_active','usage_limit_reached'):
+        if code in ('insufficient_quota','billing_hard_limit_reached','billing_not_active','usage_limit_reached','credit_balance_exhausted'):
             return AIRequestError('quota_exhausted','OpenAI has no available API quota for this project. Check API billing, credits and project spending limits, then retry. A successful key check does not verify available credits.')
+        if code in ('project_spend_limit_exceeded','organization_spend_limit_exceeded'):
+            return AIRequestError('spend_limit','OpenAI reports that the project or organization spending limit has been reached. Review the limit in OpenAI settings or wait for its reset; retrying alone will not restore access.')
+        if code=='organization_usage_limit_exceeded':
+            return AIRequestError('usage_limit','OpenAI reports that the organization monthly usage limit has been reached. Request a higher approved usage limit in OpenAI or contact their support.')
         if error.code==401:return AIRequestError('authentication','OpenAI rejected the API key (HTTP 401). Replace or re-save the key in Integrations, then test it.')
         if error.code==403:return AIRequestError('permission_denied','OpenAI denied generation access (HTTP 403). Give this project key Responses write access and access to the selected model, then retry.')
         if code=='model_not_found' or error.code==404:return AIRequestError('model_unavailable','The configured model is not available to this OpenAI project. Check the exact model ID and its access in Integrations.')
-        if error.code==429:return AIRequestError('rate_limited','OpenAI is temporarily rate-limiting this project (HTTP 429). Wait a moment and retry; check your project rate limits if this continues.')
+        if error.code==429:
+            if code in ('rate_limit_exceeded','slow_down'):
+                return AIRequestError('rate_limited','OpenAI is temporarily rate-limiting this project (HTTP 429). Wait a moment and retry; check your project rate limits if this continues.')
+            return AIRequestError('limit_unknown','OpenAI rejected generation with HTTP 429, but did not provide a recognized cause. This can indicate API credits, spending/usage limits or temporary rate limits. Check OpenAI Billing and Limits; a successful key check does not confirm generation quota.')
         if error.code in (400,422):
             message='OpenAI rejected the response format or a request setting (HTTP '+str(error.code)+'). Check that the selected model supports Responses and structured JSON output.'
             if param=='model':message='OpenAI rejected the configured model (HTTP '+str(error.code)+'). Check the exact model ID and Responses support in Integrations.'
