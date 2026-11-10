@@ -979,7 +979,7 @@ def create_app(config=None):
 
     @app.after_request
     def headers(response):
-        response.headers['Cache-Control'] = 'no-store'
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable' if request.endpoint=='static' and request.path.startswith('/static/brand/') else 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
         response.headers.setdefault('Referrer-Policy','strict-origin-when-cross-origin')
@@ -1405,6 +1405,9 @@ def create_app(config=None):
     @app.context_processor
     def legal_context():
         return dict(policy_version=POLICY_VERSION)
+
+    from social_sharing import install as install_social_sharing
+    install_social_sharing(app)
 
     @app.route('/register', methods=['GET', 'POST'])
     def register():
