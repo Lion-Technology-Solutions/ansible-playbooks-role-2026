@@ -7,6 +7,6 @@
 <section class="two-col"><article class="panel">{{ program_details(course, g.student.country if g.student else 'Other', cohorts) }}</article>
 <aside class="panel course-enrollment"><h2>Build your next skill.</h2><p>Join live online learning with practical projects and instructor feedback.</p>
 {% if course.publication.published %}<a class="button blue" href="{{ url_for('application',program=course.slug) }}">Choose this program →</a>{% else %}<span class="status pending">Draft · Enrollment closed</span>{% endif %}
-<h3>Published tuition</h3>{% for country,price in course.profile.tuition.items() if price %}<p><strong>{{ country }}</strong><br>{{ price }}</p>{% else %}<p>Contact LionTech for tuition and payment options.</p>{% endfor %}
+{% if program_payment_policy(course) %}<h3>Current payment plan</h3><p>USD {{ '%.2f'|format(program_payment_policy(course).total) }} total, including the initial USD 10.00 payment. Review the schedule before paying.</p>{% else %}<h3>Published tuition</h3>{% for country,price in course.profile.tuition.items() if price %}<p><strong>{{ country }}</strong><br>{{ price }}</p>{% else %}<p>Contact LionTech for tuition and payment options.</p>{% endfor %}{% endif %}
 {{ external(support_url,'Ask about this program','outline') }}</aside></section>
 {% endblock %}

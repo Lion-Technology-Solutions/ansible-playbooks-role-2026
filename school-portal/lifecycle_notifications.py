@@ -1,6 +1,6 @@
 """Transaction-bound account/payment outbox and authenticated daily reminders."""
 import base64,hmac,json,os,re,secrets
-from datetime import timedelta
+from datetime import timedelta,date
 from decimal import Decimal
 from urllib.parse import quote
 from urllib.error import HTTPError
@@ -116,6 +116,8 @@ def install(app,db,m,h):
                     if row.status=='approved':enqueue(student,'enrollment_approved',payload=payload,session_=session_)
                     elif row.status in ('revoked','rejected') and ('approved' in state.attrs.status.history.deleted or row.status=='revoked'):enqueue(student,'access_revoked',payload=payload,session_=session_)
     def message(event):
+        if event.kind=='support_payment_review':
+            return 'Flutterwave receipt ready for review',('Student: '+event.student.name+'\nStudent number: '+event.student.student_number+'\nProgram: '+event.payload.get('course','')+'\nAmount submitted for verification: '+event.payload.get('amount','')+'\nReview privately: '+ORIGIN+'/admin?view=payments\nSign in and verify actual funds before approving access.')
         if event.kind=='support_account_created':
             student=event.student
             return 'New student account — LionTech review required',('A student account has been created.\nStudent: '+student.name+'\nStudent number: '+student.student_number+'\nReview the account and enrollment: '+ORIGIN+'/admin/students/'+student.id+'/review'+'\nAdministrator sign-in is required. Account creation does not confirm payment or grant class access.')
@@ -169,7 +171,7 @@ def install(app,db,m,h):
             if row.channel=='email':
                 if not service['ready']('email'):row.status='awaiting_email';db.session.commit();return
                 values=service['config']('email');title,body=message(row);recipient=row.payload.get('recipient') or student.email
-                if row.kind=='support_account_created':
+                if row.kind in ('support_account_created','support_payment_review'):
                     administrator=db.session.get(m['AdminAccount'],1)
                     recipient=administrator.email if administrator else app.config.get('SCHOOL_ADMIN_EMAIL') or os.environ.get('SCHOOL_ADMIN_EMAIL') or 'liontechacademy@gmail.com'
                 row.attempts+=1
@@ -240,6 +242,10 @@ def install(app,db,m,h):
             tuition=db.session.get(m['TuitionControl'],enrollment.id)
             if (control and not control.active) or enrollment.status=='rejected' or (enrollment.status=='revoked' and (not tuition or tuition.status!='overdue' or tuition.access_hold)):continue
             pref=db.session.get(m['StudentPreference'],student.id);today=now().astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date();due=aware(invoice.created_at).astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date()
+            fixed=db.session.get(m['EnrollmentPaymentSchedule'],enrollment.id)
+            if fixed:
+                if not fixed.stages[0].get('due'):continue
+                due=date.fromisoformat(fixed.stages[0]['due'])
             if today<due:continue
             last=db.session.scalar(select(Event).where(Event.event_key.like('fee-due:'+invoice.id+':%')).order_by(Event.created_at.desc()).limit(1))
             if last and aware(last.created_at)>now()-timedelta(days=7):continue

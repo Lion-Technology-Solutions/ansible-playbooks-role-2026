@@ -135,7 +135,9 @@ def install(app,db,m,h):
     @app.get('/payments/enrollment/<int:enrollment_id>')
     @student_required()
     def global_payment(enrollment_id):
-        enrollment=owner_enrollment(enrollment_id);invoice=invoice_for(enrollment)
+        enrollment=owner_enrollment(enrollment_id)
+        if app.extensions['program_link_plans']['ensure'](enrollment):return redirect(url_for('link_payment_plan',enrollment_id=enrollment.id))
+        invoice=invoice_for(enrollment)
         return render_template('global_payment.html',e=enrollment,invoice=invoice,fee=local_money(invoice.amount_usd,g.student.country),location=residence(g.student.country),manuals=db.session.scalars(select(Manual).where(Manual.invoice_id==invoice.id).order_by(Manual.created_at.desc())).all(),card_record=db.session.scalar(select(Checkout).where(Checkout.invoice_id==invoice.id)),card_ready=provider_ready('card'),charge=presentment(invoice,g.student.country))
 
     @app.post('/payments/verify-student')
@@ -203,6 +205,7 @@ def install(app,db,m,h):
     @student_required()
     def card_checkout(invoice_id):
         invoice=db.get_or_404(Invoice,invoice_id);owner_enrollment(invoice.enrollment_id)
+        if app.extensions['program_link_plans']['existing'](invoice.enrollment):return redirect(url_for('link_payment_plan',enrollment_id=invoice.enrollment_id))
         if not provider_ready('card'):abort(503,'Card checkout is awaiting provider connection. Use manual payment or contact support.')
         try:
             verify_identity()

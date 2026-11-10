@@ -521,6 +521,45 @@ class CoursePrice(db.Model):
     installment_url=db.Column(db.Text,default='',nullable=False)
 
 
+class CoursePaymentPolicy(db.Model):
+    __tablename__='portal_course_payment_policies'
+    course_id=db.Column(db.Integer,db.ForeignKey('portal_courses.id'),primary_key=True)
+    total=db.Column(db.Numeric(12,2),nullable=False)
+    currency=db.Column(db.String(3),nullable=False)
+    checkout_url=db.Column(db.Text,nullable=False)
+    stages=db.Column(db.JSON,nullable=False)
+    enabled=db.Column(db.Boolean,nullable=False,default=True)
+
+
+class EnrollmentPaymentSchedule(db.Model):
+    __tablename__='portal_enrollment_payment_schedules'
+    enrollment_id=db.Column(db.Integer,db.ForeignKey('portal_enrollments.id'),primary_key=True)
+    total=db.Column(db.Numeric(12,2),nullable=False)
+    currency=db.Column(db.String(3),nullable=False)
+    checkout_url=db.Column(db.Text,nullable=False)
+    stages=db.Column(db.JSON,nullable=False)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+
+
+class PlanPaymentProof(db.Model):
+    __tablename__='portal_plan_payment_proofs'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    enrollment_id=db.Column(db.Integer,db.ForeignKey('portal_enrollments.id'),nullable=False,index=True)
+    stage=db.Column(db.Integer,nullable=False)
+    amount=db.Column(db.Numeric(12,2),nullable=False)
+    currency=db.Column(db.String(3),nullable=False)
+    reference=db.Column(db.String(150),nullable=False,unique=True)
+    receipt_path=db.Column(db.Text)
+    receipt_name=db.Column(db.String(180),nullable=False)
+    receipt_mime=db.Column(db.String(60),nullable=False)
+    note=db.Column(db.Text,nullable=False,default='')
+    feedback=db.Column(db.Text,nullable=False,default='')
+    status=db.Column(db.String(20),nullable=False,default='submitted')
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+    reviewed_at=db.Column(db.DateTime(timezone=True))
+    enrollment=db.relationship('Enrollment')
+
+
 class BillingSelection(db.Model):
     __tablename__='portal_billing_selections'
     enrollment_id=db.Column(db.Integer,db.ForeignKey('portal_enrollments.id'),primary_key=True)
@@ -969,6 +1008,9 @@ def create_app(config=None):
                             connection.execute(text('SELECT pg_advisory_xact_lock(73592026)'))
                         db.metadata.create_all(bind=connection)
                         seed(connection)
+                        if app.config.get('DATA_ANALYTICS_LINK_PLAN',True):
+                            from program_link_plans import seed_policy
+                            seed_policy(connection,globals())
                     schema_ready = True
         g.student = None
         student = db.session.get(Student, session.get('student_id')) if session.get('student_id') else None
@@ -1022,7 +1064,7 @@ def create_app(config=None):
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
 
     def student_required():
         def decorate(fn):
@@ -1054,6 +1096,8 @@ def create_app(config=None):
         return ((terms.checkout_url,'Pay selected plan') if terms.checkout_url else None) if terms else course_payment(enrollment.course,enrollment.student.country)
 
     def billing_data(enrollment):
+        custom=app.extensions['program_link_plans']['billing'](enrollment)
+        if custom:return custom
         terms=db.session.get(BillingSelection,enrollment.id)
         if not terms:return None
         collected=sum((entry.amount for entry in db.session.scalars(select(PaymentEntry).where(PaymentEntry.enrollment_id==enrollment.id,PaymentEntry.currency==terms.currency,~PaymentEntry.id.in_(select(FeeLedger.entry_id))))),Decimal(0))
@@ -1120,6 +1164,8 @@ def create_app(config=None):
     def application_payment(enrollment_id):
         enrollment=db.get_or_404(Enrollment,enrollment_id)
         if enrollment.student_id!=g.student.id:abort(403)
+        custom=app.extensions['program_link_plans']['ensure'](enrollment)
+        if custom:return redirect(url_for('link_payment_plan',enrollment_id=enrollment.id))
         return render_template('application_payment.html',e=enrollment,step=3,offer=offer_for(enrollment.course_id,g.student.country),billing=billing_data(enrollment))
 
     @app.post('/enrollment/<int:enrollment_id>/plan')
@@ -1127,6 +1173,10 @@ def create_app(config=None):
     def enrollment_plan(enrollment_id):
         enrollment=db.get_or_404(Enrollment,enrollment_id)
         if enrollment.student_id!=g.student.id:abort(403)
+        if app.extensions['program_link_plans']['ensure'](enrollment):return redirect(url_for('link_payment_plan',enrollment_id=enrollment.id))
+        if app.extensions['program_link_plans']['policy'](enrollment.course) and db.session.get(BillingSelection,enrollment.id):
+            flash('Your existing payment agreement is preserved. Contact support before switching to the current Data Analytics plan.')
+            return redirect(url_for('application_payment',enrollment_id=enrollment.id))
         try:
             offer=offer_for(enrollment.course_id,g.student.country);plan=field('plan',15)
             if not offer or plan not in ('full','installments') or (plan=='installments' and offer.installments<2):raise ValueError('This payment plan is not configured for your program and country.')
@@ -1164,12 +1214,14 @@ def create_app(config=None):
         records=db.session.scalars(query.order_by(Enrollment.created_at.desc())).all()
         entries=db.session.scalars(select(PaymentEntry).where(PaymentEntry.enrollment_id.in_([e.id for e in records]),PaymentEntry.currency==currency).order_by(PaymentEntry.received_at.desc())).all()
         terms=db.session.scalars(select(BillingSelection).where(BillingSelection.enrollment_id.in_([e.id for e in records]),BillingSelection.currency==currency)).all()
+        custom_terms=list(db.session.scalars(select(EnrollmentPaymentSchedule).where(EnrollmentPaymentSchedule.enrollment_id.in_([e.id for e in records]),EnrollmentPaymentSchedule.currency==currency)))
+        custom_ids={item.enrollment_id for item in custom_terms};terms+=custom_terms
         totals={}
         for entry in entries:
-            if not db.session.get(FeeLedger,entry.id):totals[entry.enrollment_id]=totals.get(entry.enrollment_id,Decimal(0))+entry.amount
+            if entry.enrollment_id in custom_ids or not db.session.get(FeeLedger,entry.id):totals[entry.enrollment_id]=totals.get(entry.enrollment_id,Decimal(0))+entry.amount
         collected=sum((entry.amount for entry in entries),Decimal(0))
         pending_fees=list(db.session.scalars(select(FeeInvoice).where(FeeInvoice.enrollment_id.in_([e.id for e in records]),FeeInvoice.status=='pending'))) if currency=='USD' else []
-        outstanding=(sum((max(Decimal(0),item.total-totals.get(item.enrollment_id,Decimal(0))) for item in terms),Decimal(0))+sum((invoice.amount_usd for invoice in pending_fees),Decimal(0))) if terms or pending_fees else None
+        outstanding=(sum((max(Decimal(0),item.total-totals.get(item.enrollment_id,Decimal(0))) for item in terms),Decimal(0))+sum((invoice.amount_usd for invoice in pending_fees if invoice.enrollment_id not in custom_ids),Decimal(0))) if terms or pending_fees else None
         confirmed=[e for e in records if e.status=='approved' and e.payment_status=='verified']
         goal=db.session.get(GrowthGoal,2027)
         page=request.args.get('page','1')
@@ -1960,6 +2012,8 @@ def create_app(config=None):
     app.extensions['notifications']=install_notifications(app,db,globals(),dict(admin_required=admin_required,confirm_enrollment=confirm_enrollment))
     from student_management import install as install_student_management
     app.extensions['student_management']=install_student_management(app,db,globals(),dict(admin_required=admin_required,notify=notify,confirm_enrollment=confirm_enrollment))
+    from program_link_plans import install as install_link_plans
+    app.extensions['program_link_plans']=install_link_plans(app,db,globals(),dict(student_required=student_required,admin_required=admin_required,notify=notify))
     from chatgpt_bridge import install as install_bridge
     app.extensions['chatgpt_bridge']=install_bridge(app,db,globals(),dict(admin_required=admin_required))
     from portal_languages import install as install_languages

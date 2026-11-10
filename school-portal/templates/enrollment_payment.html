@@ -1,4 +1,4 @@
-{% set payment=enrollment_checkout(e) %}
+{% if uses_link_plan(e) %}<p><a class="button red" href="{{ url_for('link_payment_plan',enrollment_id=e.id) }}">View Data Analytics payment plan · Start with USD 10.00 →</a></p><p>Pay through Flutterwave and submit your receipt for verification. The initial payment counts toward your program total.</p>{% else %}{% set payment=enrollment_checkout(e) %}
 <p><a class="button red" href="{{ url_for('global_payment',enrollment_id=e.id) }}">Enrollment fee · US$5.00 in your local currency →</a></p><div class="payment-box" id="payment-{{ e.id }}"><h4>Payment methods &amp; enrollment confirmation</h4><p>Payment status: <strong>{{ e.payment_status|replace('_',' ')|title }}</strong></p>
 {% if e.payment_status=='verified' %}
   <p>Payment verified by your administrator.</p>{% if e.status=='approved' %}<p class="status success">Enrollment confirmed · Class access unlocked</p>{% else %}<p>Payment received. Your enrollment is awaiting final approval.</p>{% endif %}
@@ -12,3 +12,4 @@
     <button class="button blue">{{ 'Update payment reference' if e.payment_status=='submitted' else 'Submit payment for verification' }}</button>
   </form></details>
 {% endif %}</div>
+{% endif %}

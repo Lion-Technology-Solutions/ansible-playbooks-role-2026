@@ -66,6 +66,7 @@ def install(app,db,m,h):
     @h['student_required']()
     def flutterwave_checkout(invoice_id):
         invoice=db.get_or_404(Invoice,invoice_id);h['owner_enrollment'](invoice.enrollment_id)
+        if app.extensions['program_link_plans']['existing'](invoice.enrollment):return redirect(url_for('link_payment_plan',enrollment_id=invoice.enrollment_id))
         if not service['ready']('flutterwave'):abort(503,'Flutterwave checkout is awaiting provider configuration. Contact support or use another payment method.')
         try:
             h['verify_identity']()
