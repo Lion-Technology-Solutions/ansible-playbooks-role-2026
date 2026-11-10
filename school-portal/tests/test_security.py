@@ -364,20 +364,17 @@ def test_security_email_direct_handoff_does_not_wait_for_queue(app,monkeypatch):
     assert b'Welcome' in response.data
 
 
-def test_security_email_failed_direct_handoff_queues_retry(app,monkeypatch):
+def test_security_email_failed_direct_handoff_is_visible_without_queue(app,monkeypatch):
     student=prepare_immediate_email(app);queued=[]
     app.config['AUTH_HTTP']=lambda *a,**k:(_ for _ in ()).throw(TimeoutError())
     monkeypatch.setattr('integration_jobs.publish',lambda payload:queued.append(payload))
     response=register(student)
-    assert b'Your verification email is delayed' in response.data and len(queued)==1
-    assert set(queued[0])=={'kind','id','run'}
+    assert b'verification email could not be sent' in response.data and not queued
     with app.app_context():
-        row=db.session.scalar(select(AuthMail));assert row.status=='retry_queued' and row.attempts==1 and row.ciphertext
+        row=db.session.scalar(select(AuthMail));assert row.status=='failed' and row.attempts==1 and row.ciphertext
     calls=[];app.config['AUTH_HTTP']=lambda *a,**k:calls.append(a) or {}
-    with app.test_request_context('/internal/security-worker'):
-        app.extensions['auth_security']['process_mail'](queued[0]['id'])
-        assert db.session.get(AuthMail,queued[0]['id']).status=='sent'
-    assert len(calls)==1
+    response=student.post('/verify-email',data={'csrf':csrf(student,'/verify-email'),'action':'resend'},follow_redirects=True)
+    assert b'Verification email accepted' in response.data and len(calls)==1 and not queued
 
 
 def test_expired_and_superseded_codes_are_not_sent_from_retry_queue(app):
@@ -402,4 +399,4 @@ def test_security_email_failed_direct_and_queue_reports_failure(app,monkeypatch)
     monkeypatch.setattr('integration_jobs.publish',lambda payload:(_ for _ in ()).throw(TimeoutError()))
     response=register(student)
     assert b'verification email could not be sent' in response.data
-    with app.app_context():assert db.session.scalar(select(AuthMail)).status=='queue_failed'
+    with app.app_context():assert db.session.scalar(select(AuthMail)).status=='failed'

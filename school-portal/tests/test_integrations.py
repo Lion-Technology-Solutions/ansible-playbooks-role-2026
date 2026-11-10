@@ -203,24 +203,20 @@ def test_calendar_event_scope_idempotent_updates_and_background_preference(app):
     count=len(calls);student.post('/connections/google/sync',data={'csrf':csrf(student,'/account/connections')});assert len(calls)==count
 
 
-def test_automatic_delivery_only_after_admin_enables_and_skips_sent_and_revoked(app):
+def test_direct_delivery_needs_no_queue_and_skips_sent_and_opted_out(app,monkeypatch):
     manager,student=setup(app);app.config['INTEGRATION_HTTP']=http_ok
     configure(app,manager,'email');configure(app,manager,'email',action='test')
-    course,cohort=analytics(app);approve(app,student,manager,course,cohort);schedule(manager,course,cohort)
-    sent=[];published=[];app.config['CLASS_EMAIL_SENDER']=lambda *args:sent.append(args);app.config['INTEGRATION_QUEUE_PUBLISH']=lambda message:published.append(message)
+    course,cohort=analytics(app);approve(app,student,manager,course,cohort)
+    sent=[];app.config['CLASS_EMAIL_SENDER']=lambda *args:sent.append(args)
+    monkeypatch.setattr('integration_jobs.publish',lambda *a:(_ for _ in ()).throw(AssertionError('Queue must not be used')))
+    app.config['DIRECT_DELIVERY']=True
+    schedule(manager,course,cohort)
+    assert len(sent)==1
     with app.test_request_context('/health'):
         jid=db.session.scalar(select(ClassDelivery.id));app.extensions['integrations']['process_delivery'](jid)
-    assert not sent
-    r=manager.post('/admin/integrations/delivery/settings',data={'csrf':csrf(manager,'/admin/integrations'),'admin_password':'test-admin-password','automatic':'yes'},follow_redirects=True)
-    assert r.status_code==200 and published[0]['kind']=='drain'
-    with app.test_request_context('/health'):
-        app.extensions['integrations']['process_delivery'](jid);app.extensions['integrations']['process_delivery'](jid)
     assert len(sent)==1
     student.post('/account/connections',data={'csrf':csrf(student,'/account/connections')})
     schedule(manager,course,cohort,title='Reminders opted out')
-    with app.test_request_context('/health'):
-        last=db.session.scalar(select(ClassDelivery.id).order_by(ClassDelivery.id.desc()));app.extensions['integrations']['process_delivery'](last)
-        assert not db.session.get(StudentIntegrationPreference,db.session.scalar(select(Student.id))).reminders
     assert len(sent)==1
 
 

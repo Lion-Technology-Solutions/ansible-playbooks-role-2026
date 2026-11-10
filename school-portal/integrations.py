@@ -387,43 +387,55 @@ def install(app,db,m,h):
 
     Control=m['IntegrationDeliveryControl']
 
-    def dispatch(probe=False):
-        control=db.session.get(Control,1)
-        if not probe and (not control or not control.automatic):return False
-        if not control:control=Control(id=1);db.session.add(control);db.session.commit()
-        try:
-            from integration_jobs import publish
-            publisher=app.config.get('INTEGRATION_QUEUE_PUBLISH',publish)
-            publisher({'kind':'probe' if probe else 'drain','cursor':0,'run':secrets.token_hex(12)})
-            control.last_publish_at=now();control.publish_status='accepted';audit('worker','queue_publish','accepted');db.session.commit();return True
-        except Exception:
-            db.session.rollback();control=db.session.get(Control,1);control.publish_status='unavailable';audit('worker','queue_publish','failed');db.session.commit();return False
+    def dispatch(probe=False,class_id=None):
+        if app.testing and not app.config.get('DIRECT_DELIVERY'):return True
+        # Complete direct provider calls before returning the scheduling response.
+        # Independent sessions let a small pool deliver to students concurrently.
+        from concurrent.futures import ThreadPoolExecutor
+        ids=[];cursor=0
+        while True:
+            batch=delivery_batch(cursor,100,class_id=class_id)
+            ids.extend(batch)
+            if len(batch)<100:break
+            cursor=batch[-1]
+        db.session.commit()
+        def deliver(identity):
+            with app.app_context():
+                try:process_delivery(identity);return True
+                except Exception:
+                    db.session.rollback()
+                    app.logger.warning('Direct class delivery failed; delivery record retained.')
+                    return False
+        if app.testing:results=[deliver(identity) for identity in ids]
+        else:
+            with ThreadPoolExecutor(max_workers=8) as executor:results=list(executor.map(deliver,ids))
+        control=db.session.get(Control,1) or Control(id=1)
+        control.automatic=True;control.last_publish_at=now();control.publish_status='direct_completed' if all(results) else 'direct_partial_failure'
+        db.session.add(control);audit('delivery','direct_send',control.publish_status);db.session.commit()
+        return all(results)
 
     @app.post('/admin/integrations/delivery/settings')
     @admin_required
     def integration_delivery_settings():
-        reauthenticate();control=db.session.get(Control,1) or Control(id=1)
-        control.automatic=request.form.get('automatic')=='yes';db.session.add(control);audit('worker','automatic_delivery','enabled' if control.automatic else 'disabled');db.session.commit()
-        success=dispatch(probe=request.form.get('probe')=='yes') if control.automatic or request.form.get('probe')=='yes' else True
-        flash('Delivery setting saved. Queue request accepted; worker confirmation will appear here after processing.' if success else 'Delivery setting saved, but the queue is unavailable. Pending records remain saved; retry the queue test.')
+        reauthenticate()
+        success=dispatch()
+        flash('Direct delivery completed. Review notification activity for provider status.' if success else 'Some deliveries failed. Review activity and provider settings before retrying.')
         return redirect(url_for('integration_hub'))
 
     @app.context_processor
     def integration_context():
         return {'delivery_control':db.session.get(Control,1) if session.get('admin') else None}
 
-    def delivery_batch(cursor,limit=30):
-        control=db.session.get(Control,1)
-        if not control or not control.automatic:return []
+    def delivery_batch(cursor,limit=30,class_id=None):
         Job=m['ClassDelivery'];Class=m['ClassSession']
-        return list(db.session.scalars(select(Job.id).join(Class,Class.id==Job.class_id).where(Job.id>cursor,Class.starts_at>=now()-timedelta(days=1)).order_by(Job.id).limit(limit)))
+        query=select(Job.id).join(Class,Class.id==Job.class_id).where(Job.id>cursor,Class.starts_at>=now()-timedelta(days=1))
+        if class_id is not None:query=query.where(Job.class_id==class_id)
+        return list(db.session.scalars(query.order_by(Job.id).limit(limit)))
 
     def process_delivery(job_id):
         Job=m['ClassDelivery'];Enrollment=m['Enrollment'];Detail=m['ScheduledClass']
         job=db.session.scalar(select(Job).where(Job.id==job_id).with_for_update().execution_options(populate_existing=True))
         if not job:return
-        control=db.session.get(Control,1)
-        if not control or not control.automatic:return
         lesson=job.lesson;detail=db.session.get(Detail,lesson.id)
         enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==job.student_id,Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified'))
         student_control=db.session.get(m['StudentControl'],job.student_id)

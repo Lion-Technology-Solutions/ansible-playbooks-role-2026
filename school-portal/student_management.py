@@ -128,14 +128,14 @@ def install(app,db,m,h):
         elif action=='email':
             subject=request.form.get('subject','').strip()[:160];body=request.form.get('body','').strip()[:10000]
             if not subject or not body:abort(400,'Enter a subject and message.')
-            notifications['enqueue'](student,'admin_message',payload={'subject':subject,'body':body});audit(student,'email_queued',detail=subject)
+            notifications['enqueue'](student,'admin_message',payload={'subject':subject,'body':body});audit(student,'email_requested',detail=subject)
         elif action=='whatsapp_notice':
             if not enrollment:abort(400,'Choose a program enrollment.')
             row=tuition(enrollment)
             if not row:abort(400,'Record the tuition status first.')
-            notifications['enqueue'](student,'tuition_status',payload={'enrollment_id':enrollment.id,'course':enrollment.course.name,'status':row.status,'reason':row.reason,'tuition_revision':row.revision},channel='whatsapp');audit(student,'whatsapp_queued',enrollment)
+            notifications['enqueue'](student,'tuition_status',payload={'enrollment_id':enrollment.id,'course':enrollment.course.name,'status':row.status,'reason':row.reason,'tuition_revision':row.revision},channel='whatsapp');audit(student,'whatsapp_requested',enrollment)
         else:abort(400)
-        db.session.commit();flash('Student update saved. Applicable email and WhatsApp notifications are queued; provider setup and student consent apply.')
+        db.session.commit();flash('Student update saved. Applicable email and WhatsApp notifications are sent directly to configured providers; student consent applies. Check notification activity for delivery results.')
         return redirect(url_for('admin',view='students',archived='yes' if action in ('delete',) else None))
 
     return dict(change=change,hold=hold,sweep=sweep,guard=guard)

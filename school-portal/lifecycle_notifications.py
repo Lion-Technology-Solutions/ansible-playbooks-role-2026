@@ -5,7 +5,7 @@ from decimal import Decimal
 from urllib.parse import quote
 from urllib.error import HTTPError
 from zoneinfo import ZoneInfo
-from flask import abort,current_app,flash,has_app_context,jsonify,redirect,render_template,request,session,url_for
+from flask import abort,current_app,flash,g,has_app_context,has_request_context,jsonify,redirect,render_template,request,session,url_for
 from sqlalchemy import event,inspect,select,text
 from sqlalchemy.orm import Session
 from providers import ORIGIN,api
@@ -26,12 +26,17 @@ def publish_events(session_):
     publisher=current_app.config.get('LIFECYCLE_PUBLISH')
     if publisher:
         for identity in identities:publisher(identity)
-    elif not current_app.testing:
-        from integration_jobs import publish
-        values=list(identities)
-        for start in range(0,len(values),30):
-            try:publish({'kind':'lifecycle_batch','ids':values[start:start+30],'run':secrets.token_hex(12)})
-            except Exception:current_app.logger.warning('Notification queue handoff failed; durable outbox retained.')
+    elif not current_app.testing or current_app.config.get('DIRECT_DELIVERY'):
+        # The transaction must finish before delivery uses the scoped session again.
+        # Request delivery runs before the response returns, after security mail.
+        if has_request_context():
+            g.direct_notification_ids=getattr(g,'direct_notification_ids',set()) | identities
+        elif identities:
+            app=current_app._get_current_object()
+            with app.app_context():
+                for identity in identities:
+                    try:app.extensions['notifications']['process'](identity)
+                    except Exception:app.logger.warning('Direct notification failed; delivery record retained.')
 
 
 
@@ -65,6 +70,23 @@ MESSAGES={
 def install(app,db,m,h):
     Event,Student,Control,Enrollment=(m[n] for n in ('LifecycleEvent','Student','StudentControl','Enrollment'))
     now,aware=m['now'],m['aware'];service=app.extensions['integrations']
+    @app.after_request
+    def send_committed_notifications(response):
+        identities=getattr(g,'direct_notification_ids',set())
+        g.direct_notification_ids=set()
+        def deliver(identity):
+            with app.app_context():
+                try:process(identity)
+                except Exception:
+                    db.session.rollback()
+                    app.logger.warning('Direct notification failed; delivery record retained.')
+        if app.testing:
+            for identity in identities:deliver(identity)
+        elif identities:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=8) as executor:list(executor.map(deliver,identities))
+        return response
+
     def enqueue(student,kind,key=None,payload=None,channel='email',session_=None):
         target=session_ if session_ is not None else db.session
         row=Event(id=secrets.token_hex(16),event_key=key or kind+':'+secrets.token_hex(24),student=student,kind=kind,channel=channel,payload=payload or {})
@@ -112,7 +134,7 @@ def install(app,db,m,h):
         if event.kind=='account_approved' and not data.get('enrollment_id'):
             enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==student.id).order_by(Enrollment.created_at.desc()))
             if enrollment:data={**data,'enrollment_id':enrollment.id}
-        lines.append(ORIGIN+url_for('global_payment',enrollment_id=data['enrollment_id']) if data.get('enrollment_id') else ORIGIN+('/enrollments' if event.kind=='account_approved' else '/student/login'))
+        lines.append(ORIGIN+'/payments/enrollment/'+str(data['enrollment_id']) if data.get('enrollment_id') else ORIGIN+('/enrollments' if event.kind=='account_approved' else '/student/login'))
         lines.append(('Mise à jour enregistrée : ' if fr else 'Update recorded: ')+aware(event.created_at).strftime('%Y-%m-%d %H:%M UTC'))
         lines.append('Support: liontechacademy@gmail.com · https://wa.me/14375756656')
         return title,'\n\n'.join(lines)
@@ -316,6 +338,6 @@ def install(app,db,m,h):
                         enrollment.payment_status='verified';enrollment.verified_at=enrollment.verified_at or now()
                     h['confirm_enrollment'](enrollment)
             else:abort(400)
-            db.session.commit();flash('Review saved. Related notifications have been queued.');return redirect(url_for('account_review',student_id=student.id))
+            db.session.commit();flash('Review saved. Related notifications are sent directly to configured providers.');return redirect(url_for('account_review',student_id=student.id))
         return render_template('account_review.html',admin_view='students',student=student,active=not control or control.active,reviewed=bool(control and control.reviewed_at),enrollments=db.session.scalars(select(Enrollment).where(Enrollment.student_id==student.id)).all())
     return dict(collect=collect,process=process,enqueue=enqueue,due_reminders=due_reminders,drain=drain)

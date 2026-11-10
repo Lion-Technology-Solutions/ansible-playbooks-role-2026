@@ -213,5 +213,12 @@
   "Administrative assistant": "Assistant administratif",
   "Student support assistant": "Assistant aux étudiants",
   "No classes have been published yet.": "Aucun cours n’a encore été publié.",
-  "No recordings have been published yet.": "Aucun enregistrement n’a encore été publié."
+  "No recordings have been published yet.": "Aucun enregistrement n’a encore été publié.",
+  "DIRECT DELIVERY": "ENVOI DIRECT",
+  "Immediate email & calendar updates": "Mises à jour immédiates par e-mail et calendrier",
+  "Class updates are sent directly to your connected providers when a schedule is saved. Account notifications and verification emails are also sent directly, without waiting for a queue.": "Les mises à jour des cours sont envoyées directement aux services connectés dès l’enregistrement du calendrier. Les notifications de compte et les e-mails de vérification sont également envoyés directement, sans file d’attente.",
+  "Provider acceptance does not guarantee immediate inbox delivery. Failed deliveries remain recorded for review.": "L’acceptation par le fournisseur ne garantit pas une réception immédiate. Les échecs d’envoi restent enregistrés pour vérification.",
+  "Retry outstanding class updates": "Réessayer les mises à jour de cours en attente",
+  "Direct delivery completed. Review notification activity for provider status.": "Envoi direct terminé. Consultez l’activité des notifications pour connaître l’état du fournisseur.",
+  "Some deliveries failed. Review activity and provider settings before retrying.": "Certains envois ont échoué. Consultez l’activité et les paramètres du fournisseur avant de réessayer."
 }

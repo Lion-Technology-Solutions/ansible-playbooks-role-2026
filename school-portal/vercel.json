@@ -9,5 +9,10 @@
       "path": "/internal/notifications/daily",
       "schedule": "0 13 * * *"
     }
-  ]
+  ],
+  "functions": {
+    "app.py": {
+      "maxDuration": 300
+    }
+  }
 }

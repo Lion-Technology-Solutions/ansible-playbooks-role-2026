@@ -393,7 +393,7 @@ def install(app,db,m,h):
             detail.class_id,detail.cohort_id,detail.duration,detail.join_minutes=lesson.id,cohort_id,duration,minutes
             detail.timezone,detail.instructor,detail.published=zone,instructor,published
             detail.revision=(detail.revision or 0)+1;db.session.add(detail);db.session.flush()
-            queue_class(lesson,detail);db.session.commit();app.extensions['integrations']['dispatch']();flash('Class saved. Published schedule updates are in the portal; email/calendar deliveries are queued for eligible students.')
+            queue_class(lesson,detail);db.session.commit();delivered=app.extensions['integrations']['dispatch'](class_id=lesson.id);flash('Class saved. Published schedule updates are in the portal. Email and calendar delivery was attempted directly for eligible students.' if delivered else 'Class saved, but some email or calendar deliveries failed. Review the delivery activity and retry outstanding updates.')
         except (ValueError,KeyError,IntegrityError) as error:
             db.session.rollback();flash(str(error) if isinstance(error,ValueError) else 'Could not save this schedule. Check the class and cohort details.')
         except Exception:

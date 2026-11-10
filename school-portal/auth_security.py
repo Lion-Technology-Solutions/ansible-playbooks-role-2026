@@ -130,19 +130,9 @@ def install(app,db,m,h):
             # Explicit test/transport override; production sends security mail immediately.
             publisher(row.id)
             return row
-        try:
-            process_mail(row.id)
-            return row
-        except Exception:
-            app.logger.warning('Security email direct handoff failed; scheduling retry.')
-        try:
-            from integration_jobs import publish
-            publish({'kind':'security_email','id':row.id,'run':secrets.token_hex(12)})
-            row.status='retry_queued';db.session.commit()
-        except Exception:
-            row.status='queue_failed';db.session.commit()
-            app.logger.error('Security email retry could not be queued.')
-            raise RuntimeError('Security email is unavailable.') from None
+        # Security codes are handed directly to the provider, before other alerts.
+        # Fail visibly rather than scheduling a stale code for later delivery.
+        process_mail(row.id)
         return row
     def process_mail(identity):
         row=db.session.scalar(select(Mail).where(Mail.id==identity).with_for_update())
@@ -237,7 +227,7 @@ def install(app,db,m,h):
             if request.form.get('action')=='resend':
                 try:
                     delivery=send_verification_email(student,row)
-                    flash('Verification email accepted by the email provider. Check your inbox and spam folder.' if delivery.status=='sent' else 'Email provider handoff is pending. A retry is queued; use Resend code if it does not arrive shortly.')
+                    flash('Verification email accepted by the email provider. Check your inbox and spam folder.' if delivery.status=='sent' else 'The verification email could not be sent. Select Resend code to try again.')
                 except Exception:flash('The verification email could not be sent. Check with support or retry later.')
                 return redirect(url_for('verify_email'))
             limit('email-check:'+student.id,10)
