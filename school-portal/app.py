@@ -1658,7 +1658,14 @@ def create_app(config=None):
         featured=paid[0] if paid else (enrollments[0] if enrollments else None)
         next_class=min(upcoming,key=lambda item:aware(item.starts_at)) if upcoming else None
         next_assignment=next((item for item in sorted(assessments,key=lambda item:aware(item.due_at) if item.due_at else now()+timedelta(days=3650)) if item.id not in submissions),None)
-        return render_template('portal.html', enrollments=enrollments, paid_course_ids=set(course_ids), paid=paid,
+        security_setup_due = None
+        auth_policy = db.session.get(AuthPolicy, 1)
+        auth_profile = db.session.get(AuthProfile, g.student.id)
+        if auth_policy and auth_policy.require_mfa and auth_profile and auth_profile.activated_at:
+            has_factor = db.session.scalar(select(AuthFactor.id).where(AuthFactor.student_id == g.student.id).limit(1))
+            if not has_factor:
+                security_setup_due = aware(auth_profile.activated_at) + timedelta(days=auth_policy.grace_days)
+        return render_template('portal.html', security_setup_due=security_setup_due, enrollments=enrollments, paid_course_ids=set(course_ids), paid=paid,
             progress=progress,featured=featured,next_class=next_class,next_assignment=next_assignment,
             certificates=db.session.scalars(select(Certificate).where(Certificate.student_id==g.student.id)).all(),
             lessons=lessons,
