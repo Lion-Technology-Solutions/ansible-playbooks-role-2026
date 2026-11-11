@@ -535,11 +535,14 @@ def install(app,db,m,h):
                 student=Student(name=name,email=email,phone=phone,country=country,kind='new',approved=True,password_hash=generate_password_hash(secrets.token_urlsafe(48),method='pbkdf2:sha256:600000'))
                 db.session.add(student);db.session.flush();p=new_profile(student,request.form.get('username',''))
                 if info.get('verified') and info.get('email')==email:p.email_verified_at=now();p.activated_at=now()
-                db.session.add(Identity(student_id=student.id));db.session.add(m['AccountRequest'](student_id=student.id));db.session.add(m['StudentPreference'](student_id=student.id,language=m['residence'](country)['language'],timezone=m['residence'](country)['timezone']))
+                db.session.add(Identity(student_id=student.id));db.session.add(m['AccountRequest'](student_id=student.id));db.session.add(m['StudentPreference'](student_id=student.id,language=m['residence'](country)['language'],timezone=app.extensions['local_experience']['browser_zone']() or m['residence'](country)['timezone']))
+                if country!='Other':
+                    session['local_country']=country
+                    db.session.add(m['StudentLocale'](student_id=student.id,country=country,currency=m['residence'](country)['currency'],timezone=app.extensions['local_experience']['browser_zone']() or m['residence'](country)['timezone'],country_confirmed=True,timezone_confirmed=bool(app.extensions['local_experience']['browser_zone']()),timezone_manual=bool(session.get('local_zone_manual'))))
                 application=values.get('application');enrollment=None
                 if application:
                     course=db.get_or_404(m['Course'],application.get('course_id'));cohort=db.get_or_404(m['Cohort'],application.get('cohort_id'))
-                    if not course.publication.published or cohort.course_id!=course.id or cohort.start_date not in m['next_start_dates']():raise ValueError('Choose a current program and batch before creating your account.')
+                    if not course.publication.published or cohort.course_id!=course.id or cohort.start_date not in m['available_start_dates'](course):raise ValueError('Choose a current program and batch before creating your account.')
                     enrollment=m['Enrollment'](student_id=student.id,course_id=course.id,cohort_id=cohort.id);db.session.add(enrollment)
                 m['record_policy_acceptance'](student,provider)
                 db.session.add(Social(provider=provider,subject=info['subject'],student_id=student.id));record.consumed=True;db.session.commit()

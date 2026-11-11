@@ -117,13 +117,13 @@ def install(app,db,m,h):
                     elif row.status in ('revoked','rejected') and ('approved' in state.attrs.status.history.deleted or row.status=='revoked'):enqueue(student,'access_revoked',payload=payload,session_=session_)
     def message(event):
         if event.kind=='support_payment_review':
-            return 'Flutterwave receipt ready for review',('Student: '+event.student.name+'\nStudent number: '+event.student.student_number+'\nProgram: '+event.payload.get('course','')+'\nAmount submitted for verification: '+event.payload.get('amount','')+'\nReview privately: '+ORIGIN+'/admin?view=payments\nSign in and verify actual funds before approving access.')
+            return 'Payment receipt ready for review',('Student: '+event.student.name+'\nStudent number: '+event.student.student_number+'\nProgram: '+event.payload.get('course','')+'\nAmount submitted for verification: '+event.payload.get('amount','')+'\nReview privately: '+ORIGIN+'/admin?view=payments\nSign in and verify actual funds before approving access.')
         if event.kind=='support_account_created':
             student=event.student
             return 'New student account — LionTech review required',('A student account has been created.\nStudent: '+student.name+'\nStudent number: '+student.student_number+'\nReview the account and enrollment: '+ORIGIN+'/admin/students/'+student.id+'/review'+'\nAdministrator sign-in is required. Account creation does not confirm payment or grant class access.')
-        if event.kind=='admin_message':return event.payload['subject'],event.payload['body']+'\n\nStudent number: '+event.student.student_number+'\n'+ORIGIN+'/enrollments'
+        if event.kind=='admin_message':return event.payload['subject'],app.extensions['local_experience']['text'](event.payload['body'],event.student)+'\n\nStudent number: '+event.student.student_number+'\n'+ORIGIN+'/enrollments'
         if event.kind=='tuition_status':
-            status=event.payload.get('status','pending');course=event.payload.get('course','');reason=event.payload.get('reason','')
+            status=event.payload.get('status','pending');course=event.payload.get('course','');reason=app.extensions['local_experience']['text'](event.payload.get('reason',''),event.student)
             enrollment=db.session.get(Enrollment,event.payload.get('enrollment_id'));control=db.session.get(Control,event.student_id)
             granted=bool(enrollment and enrollment.status=='approved' and enrollment.payment_status=='verified' and (not control or control.active))
             access='Your class access is available while your account is active.' if granted else 'Your course access is paused. Please review payment options or contact support.'
@@ -132,12 +132,27 @@ def install(app,db,m,h):
         title=TITLES.get(event.kind,('LionTech account update','Mise à jour du compte LionTech'))[int(fr)]
         lines=[('Bonjour ' if fr else 'Hello ')+student.name+',',MESSAGES.get(event.kind,('Your account has been updated.','Votre compte a été mis à jour.'))[int(fr)],('Numéro étudiant : ' if fr else 'Student number: ')+student.student_number]
         for key,label in (('course','Programme' if fr else 'Program'),('amount','Montant' if fr else 'Amount'),('due','Échéance' if fr else 'Due date'),('reason','Motif' if fr else 'Reason')):
-            if data.get(key):lines.append(label+': '+str(data[key]))
+            if data.get(key):
+                value=str(data[key]);localizer=app.extensions['local_experience']
+                if key=='amount':
+                    match=re.fullmatch(r'([0-9]+(?:\.[0-9]+)?) ([A-Z]{3})',value)
+                    offset=Decimal(0)
+                    if event.kind=='payment_due' and not data.get('fee'):
+                        enrollment=db.session.get(Enrollment,data.get('enrollment_id'))
+                        if enrollment:
+                            try:offset=app.extensions['local_payments']['expected'](enrollment)['offset']
+                            except ValueError:pass
+                    value=localizer['money'](match[1],match[2],student,offset=offset) if match else localizer['text'](value,student)
+                elif key=='due':
+                    try:value=localizer['deadline'](__import__('datetime').date.fromisoformat(value),student)
+                    except ValueError:pass
+                else:value=localizer['text'](value,student)
+                lines.append(label+': '+value)
         if event.kind=='account_approved' and not data.get('enrollment_id'):
             enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==student.id).order_by(Enrollment.created_at.desc()))
             if enrollment:data={**data,'enrollment_id':enrollment.id}
         lines.append(ORIGIN+'/payments/enrollment/'+str(data['enrollment_id']) if data.get('enrollment_id') else ORIGIN+('/enrollments' if event.kind=='account_approved' else '/student/login'))
-        lines.append(('Mise à jour enregistrée : ' if fr else 'Update recorded: ')+aware(event.created_at).strftime('%Y-%m-%d %H:%M UTC'))
+        lines.append(('Mise à jour enregistrée : ' if fr else 'Update recorded: ')+app.extensions['local_experience']['time'](event.created_at,student))
         lines.append('Support: liontechacademy@gmail.com · https://wa.me/14375756656')
         return title,'\n\n'.join(lines)
     def process(identity):
@@ -161,10 +176,16 @@ def install(app,db,m,h):
                 plan=db.session.get(m['BillingSelection'],row.payload.get('enrollment_id'))
                 if plan:
                     paid=sum((entry.amount for entry in db.session.scalars(select(m['PaymentEntry']).where(m['PaymentEntry'].enrollment_id==enrollment.id,m['PaymentEntry'].currency==plan.currency,~m['PaymentEntry'].id.in_(select(m['FeeLedger'].entry_id))))),Decimal(0))
-                    pref=db.session.get(m['StudentPreference'],student.id);today=now().astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date();balance=sum((part['amount'] for part in installment_schedule(plan.total,plan.installments,plan.starts_on) if part['due']<=today),Decimal(0))-paid
+                    pref=db.session.get(m['StudentPreference'],student.id);today=now().astimezone(ZoneInfo('America/Toronto')).date();balance=sum((part['amount'] for part in installment_schedule(plan.total,plan.installments,plan.starts_on) if part['due']<=today),Decimal(0))-paid
                     settled=settled or balance<=0
                     if balance>0:row.payload={**row.payload,'amount':str(balance)+' '+plan.currency}
-                else:settled=True
+                else:
+                    fixed=db.session.get(m['EnrollmentPaymentSchedule'],enrollment.id) if enrollment else None
+                    if fixed:
+                        state=app.extensions['program_link_plans']['billing'](enrollment);today=now().astimezone(ZoneInfo('America/Toronto')).date()
+                        due=[part for part in state['parts'] if part['due'] and part['due']<=today and part['remaining']>0];balance=sum((part['remaining'] for part in due),Decimal(0));settled=settled or balance<=0
+                        if balance>0:row.payload={**row.payload,'amount':str(balance)+' '+fixed.currency,'due':due[0]['due'].isoformat()}
+                    else:settled=True
             if settled:row.status='cancelled';db.session.commit();return
         transport=app.config.get('LIFECYCLE_HTTP',api)
         try:
@@ -191,7 +212,7 @@ def install(app,db,m,h):
                     if not re.fullmatch(r'\+[1-9][0-9]{6,14}',consent.phone):row.status='invalid_recipient';db.session.commit();return
                     template=values.get('TWILIO_CLASS_TEMPLATE_SID','');recipient='whatsapp:'+consent.phone
                     pref=db.session.get(m['StudentPreference'],student.id);zone=pref.timezone if pref else 'America/Toronto'
-                    local=aware(lesson.starts_at).astimezone(ZoneInfo(zone)).strftime('%Y-%m-%d %H:%M')+' '+zone
+                    local=app.extensions['local_experience']['time'](lesson.starts_at,student)
                     variables={'1':student.student_number,'2':lesson.title.replace('\n',' ').replace('\r',' '),'3':local,'4':ORIGIN+'/classes/'+str(lesson.id)}
                 if row.kind=='tuition_status':
                     consent=db.session.get(m['TuitionWhatsAppPreference'],student.id)
@@ -224,7 +245,7 @@ def install(app,db,m,h):
             enrollment=db.session.get(Enrollment,plan.enrollment_id);student=enrollment.student;control=db.session.get(Control,student.id)
             tuition=db.session.get(m['TuitionControl'],enrollment.id)
             if (control and not control.active) or enrollment.status=='rejected' or (enrollment.status=='revoked' and (not tuition or tuition.status!='overdue' or tuition.access_hold)):continue
-            pref=db.session.get(m['StudentPreference'],student.id);today=now().astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date()
+            pref=db.session.get(m['StudentPreference'],student.id);today=now().astimezone(ZoneInfo('America/Toronto')).date()
             paid=sum((entry.amount for entry in db.session.scalars(select(m['PaymentEntry']).where(m['PaymentEntry'].enrollment_id==enrollment.id,m['PaymentEntry'].currency==plan.currency,~m['PaymentEntry'].id.in_(select(m['FeeLedger'].entry_id))))),Decimal(0))
             parts=installment_schedule(plan.total,plan.installments,plan.starts_on);due=[part for part in parts if part['due']<=today];remaining=sum((part['amount'] for part in due),Decimal(0))-paid
             if remaining<=0 or (tuition and tuition.status=='completed' and tuition.source=='admin'):continue
@@ -254,7 +275,7 @@ def install(app,db,m,h):
             enrollment=invoice.enrollment;student=enrollment.student;control=db.session.get(Control,student.id)
             tuition=db.session.get(m['TuitionControl'],enrollment.id)
             if (control and not control.active) or enrollment.status=='rejected' or (enrollment.status=='revoked' and (not tuition or tuition.status!='overdue' or tuition.access_hold)):continue
-            pref=db.session.get(m['StudentPreference'],student.id);today=now().astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date();due=aware(invoice.created_at).astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date()
+            pref=db.session.get(m['StudentPreference'],student.id);today=now().astimezone(ZoneInfo('America/Toronto')).date();due=aware(invoice.created_at).astimezone(ZoneInfo('America/Toronto')).date()
             fixed=db.session.get(m['EnrollmentPaymentSchedule'],enrollment.id)
             if fixed:continue # The staged-plan reminder above includes the enrollment payment once.
             if today<due:continue

@@ -29,19 +29,10 @@ def install(app,db,m,h):
     def call(path,method='GET',payload=None):
         return app.config.get('FLUTTERWAVE_HTTP',api)('https://api.flutterwave.com/v3/'+path,method,payload,{'Authorization':'Bearer '+values().get('FLW_SECRET_KEY','')})
     def amount(invoice):
-        currency=service['config']('flutterwave').get('FLW_CHECKOUT_CURRENCY','').strip().upper() or 'USD'
-        if currency not in CURRENCIES:raise ValueError('The configured Flutterwave checkout currency is not supported by the portal.')
-        value=invoice.amount_usd;rate='1';asof=None
-        if currency!='USD':
-            rates,asof=h['rates']();rate=rates.get(currency)
-            if not rate or not asof or aware(asof)<now()-timedelta(hours=48):raise ValueError('A current exchange rate is unavailable. Use another payment method or contact support.')
-            try:
-                number=Decimal(str(rate))
-                if not number.is_finite() or number<=0:raise ValueError()
-                value=converted(invoice.amount_usd,currency,number)
-                if value<=0 or value>Decimal('999999999999.999'):raise ValueError()
-            except (ValueError,InvalidOperation):raise ValueError('The checkout exchange rate is invalid. Contact support.') from None
-        return dict(amount=str(value),currency=currency,formatted=formatted(value,currency),rate=str(rate),as_of=asof)
+        result=app.extensions['local_experience']['quote'](invoice.amount_usd)
+        if not result['available'] or not result['as_of'] or result['stale']:raise ValueError('Current local-currency checkout is unavailable. Confirm your country or contact support.')
+        if result['currency'] not in CURRENCIES:raise ValueError('Flutterwave cannot charge in your local currency. Choose a confirmed local payment method.')
+        return dict(amount=result['amount'],currency=result['currency'],formatted=result['local'],rate=result['rate'],as_of=result['as_of'])
     def verify(record,transaction_id):
         if record.paid:return
         if record.test_mode!=values().get('FLW_SECRET_KEY','').startswith('FLWSECK_TEST-'):raise ValueError('Restore the original checkout environment before verifying this payment.')
@@ -75,6 +66,7 @@ def install(app,db,m,h):
             test_mode=values().get('FLW_SECRET_KEY','').startswith('FLWSECK_TEST-')
             record=db.session.scalar(select(Checkout).where(Checkout.invoice_id==invoice.id,Checkout.test_mode==test_mode))
             if record:
+                if record.currency!=app.extensions['local_experience']['state']()['currency']:raise ValueError('An existing checkout uses a different currency. Contact support before paying again.')
                 if record.paid:raise ValueError('This checkout has already been verified. Review your payment record or contact support.')
                 if checkout_url(record.checkout_url) and aware(record.created_at)>now()-timedelta(hours=23):return redirect(record.checkout_url,code=303)
                 raise ValueError('This checkout attempt requires support review. Use another payment method or contact support; do not pay twice.')
@@ -123,6 +115,8 @@ def install(app,db,m,h):
         if not isinstance(payment,dict):abort(400)
         reference=payment.get('tx_ref','')
         if not isinstance(reference,str) or not re.fullmatch(r'LT-[0-9a-f]{48}',reference):return '',200
+        local_result=app.extensions['local_payments']['webhook']('flutterwave',str((data.get('data') or {}).get('tx_ref','')),(data.get('data') or {}).get('id')) if 'local_payments' in app.extensions else None
+        if local_result is not None:return local_result
         record=db.session.scalar(select(Checkout).where(Checkout.reference==reference).with_for_update().execution_options(populate_existing=True))
         if not record:return '',200
         try:verify(record,payment.get('id'));return '',200

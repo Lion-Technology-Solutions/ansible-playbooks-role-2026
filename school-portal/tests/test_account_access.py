@@ -46,8 +46,8 @@ def test_active_accounts_show_courses_payments_schedule_and_announcements_before
          summary='Welcome to LionTech',body='View your course details and complete payment.',publication_state='published',
          starts_at='',ends_at='',registration_url='',location='',publish_at='')
     page=student.get('/portal')
-    for text in [b'Account automatically approved',b'Curriculum',b'30,000 FCFA',b'Payment methods',
-                 b'zx0r0urssqpb',b'Paid Analytics Class',b'Student welcome update',b'Power BI']:
+    for text in [b'Account automatically approved',b'Curriculum',b'View enrollment payment',b'Payment methods',
+                 b'Paid Analytics Class',b'Student welcome update',b'Power BI']:
         assert text in page.data
     assert_locked(student,course,lesson,rid)
     with app.app_context():

@@ -12,7 +12,7 @@ def prepare(app,monkeypatch,test=False,currency='USD'):
     monkeypatch.setenv('FLW_WEBHOOK_SECRET','unit-random-webhook-secret')
     monkeypatch.setenv('FLW_CHECKOUT_CURRENCY',currency)
     app.config['FX_PROVIDER']=lambda:({'USD':'1','NGN':'1500'},now())
-    state=setup(app)
+    state=setup(app,'Nigeria' if currency=='NGN' else 'United States')
     if currency=='NGN':
         app.config['FX_PROVIDER']=lambda:({'USD':'1','NGN':'1500'},now())
         from app import FxSnapshot

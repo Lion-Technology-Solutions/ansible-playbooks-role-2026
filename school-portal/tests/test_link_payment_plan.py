@@ -14,7 +14,7 @@ def setup_plan(app):
     course,cohort=analytics(app);request_enrollment(student,course,cohort)
     with app.app_context():eid=db.session.scalar(select(Enrollment.id))
     response=student.get('/payments/enrollment/'+str(eid),follow_redirects=True)
-    assert response.status_code==200 and b'Start learning with USD 10.00' in response.data
+    assert response.status_code==200 and b'Your Data Analytics payments' in response.data
     return student,manager,eid
 
 
@@ -23,7 +23,7 @@ def submit(student,eid,reference):
     import re
     body=student.get('/payments/plans/'+str(eid)).data
     number=re.search(rb'LT-\d{4}-\d+',body)[0].decode()
-    return student.post('/payments/plans/'+str(eid),data={'csrf':csrf(student,'/portal'),'student_number':number,'reference':reference,'amount':'0.01','receipt':(io.BytesIO(b'%PDF-1.7\nunit receipt'),'receipt.pdf')},follow_redirects=True)
+    return student.post('/payments/plans/'+str(eid),data={'csrf':csrf(student,'/portal'),'student_number':number,'reference':reference,'amount':'0.01','local_quote_id':re.search(rb'name="local_quote_id" value="([^"]+)"',body)[1].decode(),'local_amount':re.search(rb'name="local_amount"[^>]*value="([^"]+)"',body)[1].decode(),'receipt':(io.BytesIO(b'%PDF-1.7\nunit receipt'),'receipt.pdf')},follow_redirects=True)
 
 
 def review(app,manager,eid):
@@ -45,9 +45,9 @@ def test_exact_plan_is_published_and_no_extra_enrollment_fee(app):
         assert db.session.scalar(select(FeeInvoice)).amount_usd==Decimal('10.00')
         assert not db.session.get(BillingSelection,eid)
     page=app.test_client().get('/courses/data-analytics').data
-    assert b'59.97' in page and b'9.99' in page and b'US$5.00' not in page and b'monthly payments available' not in page
+    assert b'USD' not in page and b'59.97' not in page and b'monthly payments available' not in page
     page=student.get('/payments/plans/'+str(eid)).data
-    assert b'https://flutterwave.com/pay/liontechpaymentplan' in page
+    assert b'https://flutterwave.com/pay/liontechpaymentplan' not in page and b'local_quote_id' in page
 
 
 def test_initial_payment_grants_access_and_full_plan_is_credited_once(app):
@@ -85,7 +85,12 @@ def test_proof_requires_owner_private_receipt_and_explicit_admin_verification(ap
     bad=manager.post('/admin/plan-payments/'+pid+'/review',data={'csrf':csrf(manager,'/admin'),'admin_password':'test-admin-password','decision':'approve'})
     assert bad.status_code==400
     with app.app_context():assert not db.session.scalar(select(PaymentEntry)) and db.session.get(Enrollment,eid).status!='approved'
-    assert b'already awaiting review' in submit(student,eid,'ANOTHER-PLAN-REF').data
+    assert b'name="local_quote_id"' not in student.get('/payments/plans/'+str(eid)).data
+    with app.app_context():
+        from app import LocalPaymentQuote
+        quote=db.session.scalar(select(LocalPaymentQuote).where(LocalPaymentQuote.proof_id==pid));qid=quote.id;actual=str(quote.amount);number=quote.enrollment.student.student_number
+    duplicate=student.post('/payments/plans/'+str(eid),data={'csrf':csrf(student,'/portal'),'local_quote_id':qid,'local_amount':actual,'student_number':number,'reference':'ANOTHER-PLAN-REF','receipt':(io.BytesIO(b'%PDF-1.7\ntest'),'receipt.pdf')},follow_redirects=True)
+    assert b'changed or expired' in duplicate.data
 
 
 def test_manual_revocation_is_preserved_after_verified_plan_payment(app):
@@ -168,7 +173,7 @@ def test_existing_link_plan_dates_backfill_once_without_repricing_or_drifting(ap
         with db.engine.begin() as connection:seed_policy(connection,vars(module))
         db.session.expire_all();assert db.session.get(EnrollmentPaymentSchedule,eid).stages[1]['due']=='2027-01-25'
     page=student.get('/payments/plans/'+str(eid)).data
-    assert b'January 14, 2027' in page and b'Due January 25, 2027' in page
+    assert b'January 14, 2027' in page and b'January 25, 2027' in page
 
 
 def test_each_student_has_individual_dates_and_signup_previews_selected_start(app):
@@ -194,7 +199,12 @@ def test_each_student_has_individual_dates_and_signup_previews_selected_start(ap
     page=visitor.get('/register').data
     assert all(d in page for d in expected)
     # The dashboard uses the same individual next deadline, even before paying.
-    assert expected[0] in second.get('/payments/plans/'+str(other_id)).data
+    with app.app_context():
+        from datetime import time
+        from zoneinfo import ZoneInfo
+        due_local=datetime.combine(date.fromisoformat(other_plan.stages[0]['due']),time(23,59,59),ZoneInfo('America/Toronto')).astimezone(ZoneInfo('Africa/Douala'))
+        expected_date=due_local.strftime('%B %d, %Y').replace(' 0',' ').encode()
+    assert expected_date in second.get('/payments/plans/'+str(other_id)).data
 
 
 def test_unknown_start_waits_for_assignment_and_then_gets_dates(app):

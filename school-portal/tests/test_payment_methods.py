@@ -35,7 +35,7 @@ def test_installment_plan_keeps_alternatives_separate_from_flutterwave_receipts(
     student, _, eid = setup_plan(app)
     page = student.get(f'/payments/plans/{eid}').data
     assert b'data-method="mtn"' in page
-    assert b'This program currently uses the Flutterwave payment link' in page
+    assert b'Online checkout is unavailable in your currency' in page
     assert b'Ask support how to record an alternative payment' in page
     assert b'data-payment-method="Cash"' not in page
     assert b'Flutterwave transaction reference' in page

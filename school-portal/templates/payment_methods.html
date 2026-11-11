@@ -23,8 +23,8 @@
       <h3 id="methods-{{ loop.index }}">{{ heading }}</h3>
       <div class="method-grid">
       {% for key,label,description,kind,manual_method in methods %}
-        {% set stripe_enabled=not payment_plan_mode and card_ready %}
-        {% set flutterwave_enabled=payment_plan_mode or (flutterwave_ready and flutterwave_quote) %}
+        {% set stripe_enabled=local_quote and local_provider_ready('stripe',local_quote) %}
+        {% set flutterwave_enabled=local_quote and local_provider_ready('flutterwave',local_quote) %}
         {% set online_enabled=(kind=='stripe' and stripe_enabled) or (kind=='flutterwave' and flutterwave_enabled) or (kind=='card' and (stripe_enabled or flutterwave_enabled)) %}
         <details class="method-option" name="payment-method-choice" data-method="{{ key }}">
           <summary>
@@ -43,7 +43,7 @@
               <a class="button blue full" href="#flutterwave-checkout">Continue with Flutterwave →</a>
             {% endif %}
           {% elif kind!='manual' %}
-            <p>{{ 'This program currently uses the Flutterwave payment link. Contact support to arrange another method.' if payment_plan_mode else 'This checkout is not available for this invoice. Contact support for an alternative.' }}</p>
+            <p>{{ 'Online checkout is unavailable in your currency. Contact support to arrange a local method.' if payment_plan_mode else 'This checkout is not available for this invoice. Contact support for an alternative.' }}</p>
             <a href="{{ support_url }}" target="_blank" rel="noopener">Contact payment support ↗</a>
           {% else %}
             <p>Request instructions for <strong>{{ label }}</strong> before paying. Student Support will confirm availability, recipient details, currency and the exact amount for your enrollment.</p>
@@ -60,9 +60,9 @@
   </div>
   <aside class="dash-card method-summary">
     <p class="eyebrow">{{ 'YOUR NEXT PAYMENT' if payment_plan_mode else 'YOUR ENROLLMENT FEE' }}</p>
-    <p class="method-total">{% if payment_plan_mode %}USD {{ '%.2f'|format(billing.next.amount if billing.next else 0) }}{% else %}USD {{ '%.2f'|format(invoice.amount_usd) }}{% endif %}</p>
+    <p class="method-total">{% if payment_plan_mode %}{{ local_quote_label(local_quote) if local_quote else display_money(billing.next.amount if billing.next else 0,billing.terms.currency) }}{% else %}{{ local_quote_label(local_quote) if local_quote else display_money(invoice.amount_usd) }}{% endif %}</p>
     <strong>{{ e.course.name }}</strong>
-    {% if payment_plan_mode %}<p>Included in your USD {{ '%.2f'|format(plan.total) }} program total.</p>{% else %}<p>Enrollment fee only. Tuition is separate.</p>{% endif %}
+    {% if payment_plan_mode %}<p>Included in your {{ display_money(plan.total,plan.currency) }} program total.</p>{% else %}<p>Enrollment fee only. Tuition is separate.</p>{% endif %}
     <dl class="account-details"><dt>Student number</dt><dd>{{ g.student.student_number }}</dd><dt>Country of residence</dt><dd>{{ g.student.country }}</dd></dl>
     <h3>Local methods, clear instructions</h3>
     <ol><li>Select a payment method.</li><li>Confirm the amount and recipient.</li><li>Pay and save your receipt.</li><li>Submit proof where required.</li></ol>

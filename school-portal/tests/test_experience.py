@@ -31,7 +31,7 @@ def test_guided_enrollment_and_ownership(app):
     response=student.post('/apply/choose',data={'csrf':token,'course_id':course,'cohort_id':cohort})
     assert response.location.endswith('/register')
     page=register(student,country='Spain')
-    assert page.status_code==200 and b'Order summary' in page.data
+    assert page.status_code==200 and b'Your payments' in page.data
     with app.app_context():
         e=db.session.scalar(select(Enrollment));eid=e.id
         assert e.cohort_id==cohort and e.student.approved
@@ -48,10 +48,10 @@ def test_billing_snapshot_ledger_currency_and_retries(app):
     manager,student,course,cohort,eid=setup(app)
     price(manager,course)
     page=post(student,f'/enrollment/{eid}/plan',plan='installments')
-    assert b'100.00' in page.data and b'example.com/monthly' in page.data
+    assert b'USD' not in page.data and b'example.com/monthly' not in page.data
     price(manager,course,total='200.00',installment_url='https://example.com/changed')
     page=student.get(f'/apply/payment/{eid}')
-    assert b'example.com/monthly' in page.data
+    assert b'example.com/monthly' not in page.data
     with app.app_context():
         terms=db.session.get(BillingSelection,eid)
         assert terms.total==Decimal('100.00') and terms.installments==3
@@ -64,7 +64,7 @@ def test_billing_snapshot_ledger_currency_and_retries(app):
     assert b'currency saved' in post(manager,'/admin',**{**values,'reference':'WRONG-CURRENCY','currency':'USD'}).data
     assert b'change a plan after payment' in post(student,f'/enrollment/{eid}/plan',plan='full').data
     page=student.get(f'/apply/payment/{eid}')
-    assert b'66.67' in page.data
+    assert b'USD' not in page.data
     page=manager.get('/admin?currency=EUR')
     assert b'33.33' in page.data and b'66.67' in page.data and b'100.00' in page.data
     assert b'33.33' not in manager.get('/admin?currency=USD').data

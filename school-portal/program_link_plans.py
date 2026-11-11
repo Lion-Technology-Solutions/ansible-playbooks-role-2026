@@ -125,24 +125,29 @@ def install(app,db,m,h):
         if request.method=='POST':
             try:
                 app.extensions['auth_security']['limit']('plan-proof:'+g.student.id,5,60)
+                payment_quote=app.extensions['local_payments']['validate'](request.form.get('local_quote_id'),enrollment,expired=True)
+                if payment_quote.proof_id or payment_quote.manual_id:raise ValueError('This payment quote has changed or expired. Your receipt is already submitted for review.')
+                try:actual_local=Decimal(request.form.get('local_amount',''))
+                except Exception:raise ValueError('Enter the local amount actually paid.')
+                if not actual_local.is_finite() or actual_local!=payment_quote.amount:raise ValueError('The receipt amount must match your secured local-currency quote. Contact support if you paid a different amount.')
                 current=billing(enrollment)['next']
                 if not current:raise ValueError('This payment plan is already complete.')
                 if not secrets.compare_digest(request.form.get('student_number','').upper().strip(),g.student.student_number):raise ValueError('The student number does not match your signed-in account.')
                 if db.session.scalar(select(Proof.id).where(Proof.enrollment_id==enrollment.id,Proof.status=='submitted')):raise ValueError('Your payment proof is already awaiting review. Contact support if you need to correct it.')
                 reference=request.form.get('reference','').strip();note=request.form.get('note','').strip()[:1000]
-                if not 3<=len(reference)<=150 or any(ord(c)<32 for c in reference):raise ValueError('Enter the Flutterwave transaction reference from your receipt.')
+                if not 3<=len(reference)<=150 or any(ord(c)<32 for c in reference):raise ValueError('Enter the payment transaction reference from your receipt.')
                 if db.session.scalar(select(Proof.id).where(Proof.reference==reference)) or db.session.scalar(select(m['ManualFeePayment'].id).where(m['ManualFeePayment'].reference==reference)) or db.session.scalar(select(Entry.id).where(Entry.reference==reference)):raise ValueError('That transaction reference is already recorded. Contact support before submitting it again.')
                 upload=request.files.get('receipt')
-                if not upload or not upload.filename:raise ValueError('Attach your Flutterwave receipt as PDF, JPG or PNG, up to 2 MB.')
+                if not upload or not upload.filename:raise ValueError('Attach your payment receipt as PDF, JPG or PNG, up to 2 MB.')
                 data=upload.read(2*1024*1024+1);name=secure_filename(upload.filename)[:180];extension=name.rsplit('.',1)[-1].lower();mime={'pdf':'application/pdf','jpg':'image/jpeg','jpeg':'image/jpeg','png':'image/png'}.get(extension)
                 if not data or len(data)>2*1024*1024 or not mime:raise ValueError('Choose a PDF, JPG or PNG receipt no larger than 2 MB.')
                 if mime=='application/pdf':
                     if not data.startswith(b'%PDF-'):raise ValueError('Upload a valid PDF receipt.')
                 else:validate_image(data,mime)
                 proof=Proof(enrollment_id=enrollment.id,stage=current['index'],amount=current['amount'],currency=plan.currency,reference=reference,note=note,receipt_name=name,receipt_mime=mime)
-                db.session.add(proof);db.session.flush();proof.receipt_path=app.config['FILE_STORAGE'].put('plan-receipts/'+proof.id+'/'+secrets.token_hex(12),data)
+                db.session.add(proof);db.session.flush();payment_quote.proof_id=proof.id;proof.receipt_path=app.config['FILE_STORAGE'].put('plan-receipts/'+proof.id+'/'+secrets.token_hex(12),data)
                 app.extensions['notifications']['enqueue'](enrollment.student,'support_payment_review',payload={'enrollment_id':enrollment.id,'course':enrollment.course.name,'amount':str(proof.amount)+' USD'})
-                h['notify'](enrollment.student_id,'Payment proof submitted','Your Flutterwave receipt is awaiting administrator verification. A submission does not grant access.')
+                h['notify'](enrollment.student_id,'Payment proof submitted','Your payment receipt is awaiting administrator verification. A submission does not grant access.')
                 db.session.commit();flash('Payment proof received. Access changes only after an administrator verifies the payment.')
             except (ValueError,IntegrityError) as error:db.session.rollback();flash(str(error) if isinstance(error,ValueError) else 'That receipt is already recorded. Contact support.')
             except Exception:db.session.rollback();flash('The receipt could not be saved. Please retry or contact support.')
@@ -172,6 +177,11 @@ def install(app,db,m,h):
         current=billing(enrollment)['next']
         if not current or current['index']!=proof.stage or current['amount']!=proof.amount:abort(409,'The payment plan changed. Review the existing payments before approving this receipt.')
         if db.session.scalar(select(m['ManualFeePayment'].id).where(m['ManualFeePayment'].reference==proof.reference)):abort(409,'This reference is also in enrollment-fee review. Reconcile it before approval.')
+        payment_quote=app.extensions['local_payments']['proof_quote'](proof)
+        if payment_quote:
+            try:app.extensions['local_payments']['validate'](payment_quote.id,enrollment,expired=True)
+            except ValueError:abort(409,'The local payment quote no longer matches the outstanding payment. Reconcile before approval.')
+            payment_quote.credited=True
         try:
             entry=Entry(enrollment_id=enrollment.id,amount=proof.amount,currency=proof.currency,reference=proof.reference);db.session.add(entry);db.session.flush()
             invoice=db.session.scalar(select(Invoice).where(Invoice.enrollment_id==enrollment.id).with_for_update())
@@ -180,7 +190,7 @@ def install(app,db,m,h):
             proof.status='approved';proof.reviewed_at=m['now']()
             state=billing(enrollment);tuition=db.session.get(m['TuitionControl'],enrollment.id)
             grant=enrollment.status!='rejected' and (enrollment.status!='revoked' or bool(tuition and tuition.status=='overdue' and not tuition.access_hold))
-            app.extensions['student_management']['change'](enrollment,'completed' if state['remaining']==0 else 'current','Flutterwave link payment verified: '+proof.reference,source='plan',grant=grant)
+            app.extensions['student_management']['change'](enrollment,'completed' if state['remaining']==0 else 'current','Local payment receipt verified: '+proof.reference,source='plan',grant=grant)
             db.session.add(m['StudentManagementAudit'](student_id=enrollment.student_id,enrollment_id=enrollment.id,action='verify_link_payment',detail=proof.currency+' '+str(proof.amount)+' · '+proof.reference))
             db.session.commit();flash('Payment recorded. Enrollment access reflects the verified payment and existing account restrictions.')
         except IntegrityError:db.session.rollback();abort(409,'That transaction has already been recorded.')

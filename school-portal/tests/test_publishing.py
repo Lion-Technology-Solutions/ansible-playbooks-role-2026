@@ -71,10 +71,11 @@ def test_courses_have_separate_payment_links_and_no_analytics_checkout(app):
         cohort_id=db.session.scalar(select(Cohort.id).where(Cohort.course_id==course_id,Cohort.start_date==next_start_dates()[0]))
     page=request_enrollment(student,course_id,cohort_id)
     assert b'zx0r0urssqpb' not in page.data
-    assert b'Arrange enrollment payment' in page.data
+    assert b'View enrollment payment' in page.data
     post(manager,'/admin',action='program_profile',course_id=course_id,duration='8 weeks',schedule='',curriculum='Linux',
          tuition_0='Course price supplied by instructor',payment_link_0='https://flutterwave.com/pay/linux-course')
-    assert b'https://flutterwave.com/pay/linux-course' in student.get('/enrollments').data
+    assert b'https://flutterwave.com/pay/linux-course' not in student.get('/enrollments').data
+    with app.app_context():assert db.session.get(__import__('app').CoursePublication,course_id).payment_links['Cameroon']=='https://flutterwave.com/pay/linux-course'
     with app.app_context():
         original=db.session.scalar(select(Course).where(Course.slug=='data-analytics'))
         assert original.publication.payment_links['Cameroon'].endswith('zx0r0urssqpb')

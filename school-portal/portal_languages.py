@@ -85,11 +85,14 @@ def install(app,db,m):
         return result
     def key(source,language):return hashlib.sha256((language+'\0'+source).encode()).hexdigest()
 
+    def public_catalog():
+        if session.get('admin'):return dict(fr=french,en=reverse)
+        return {name:{k:v for k,v in values.items() if not __import__('re').search(r'USD|US\$|US dollars',k+' '+v,__import__('re').I)} for name,values in [('fr',french),('en',reverse)]}
     @app.context_processor
-    def language_context():return dict(language_catalog_data=dict(fr=french,en=reverse))
+    def language_context():return dict(language_catalog_data=public_catalog())
 
     @app.get('/i18n/catalog')
-    def language_catalog():return jsonify(fr=french,en=reverse)
+    def language_catalog():return jsonify(**public_catalog())
 
     @app.post('/i18n/translate')
     def translate_portal_text():

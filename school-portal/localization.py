@@ -20,10 +20,10 @@ for territory in pycountry.countries:
     languages=get_global('territory_languages').get(code,{})
     primary=max(languages,key=lambda item:languages[item].get('population_percent',0),default='en')
     zones=get_global('territory_zones').get(code,[])
-    COUNTRY_META[name]={'code':code,'currency':_CURRENCY_DATA.get(code,tender[0] if tender else 'USD'),'language':primary if primary in ('en','es','fr') else 'en','timezone':zones[0] if zones else 'UTC'}
+    COUNTRY_META[name]={'code':code,'currency':_CURRENCY_DATA.get(code,tender[0] if tender else 'USD'),'currency_known':bool(_CURRENCY_DATA.get(code) or tender),'language':primary if primary in ('en','es','fr') else 'en','timezone':zones[0] if zones else 'UTC'}
 # Preserve the historical names stored on student records.
 COUNTRY_META['United States']=COUNTRY_META.get('United States',COUNTRY_META.get('United States of America'))
-COUNTRY_META['Other']={'code':'','currency':'USD','language':'en','timezone':'UTC'}
+COUNTRY_META['Other']={'code':'','currency_known':False,'currency':'USD','language':'en','timezone':'UTC'}
 COUNTRY_META['Canada']['timezone']='America/Toronto'
 COUNTRY_META['Spain']['timezone']='Europe/Madrid'
 LEGACY_COUNTRIES=['Cameroon','Nigeria','Ghana','Canada','United States','United Kingdom','Other','Spain','France','Germany','Australia']

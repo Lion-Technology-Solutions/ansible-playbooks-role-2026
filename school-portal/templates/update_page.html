@@ -3,11 +3,11 @@
 {% block title %}{{ item.title }}{% endblock %}
 {% block content %}
 {% if preview %}<div class="notice"><strong>Administrator preview.</strong> {{ 'This item is scheduled for later publication.' if item.published and aware(item.publish_at)>utcnow else ('This item is published.' if item.published else 'This draft is hidden from the public site.') }} <a href="{{ url_for('admin',_anchor='public-content') }}">Back to publishing →</a></div>{% endif %}
-<div class="page-heading"><div><p class="eyebrow">LIONTECH ACADEMY · {{ item.kind|upper }}{% if item.kind=='event' and aware(item.ends_at or item.starts_at)<utcnow %} · PAST EVENT{% endif %}</p><h1>{{ item.title }}</h1><p>{{ item.summary }}</p></div></div>
+<div class="page-heading"><div><p class="eyebrow">LIONTECH ACADEMY · {{ item.kind|upper }}{% if item.kind=='event' and aware(item.ends_at or item.starts_at)<utcnow %} · PAST EVENT{% endif %}</p><h1>{{ item.title }}</h1><p>{{ student_text(item.summary) }}</p></div></div>
 <article class="panel public-article">
-{% if item.starts_at %}<div class="event-meta"><p><strong>Starts:</strong> {{ aware(item.starts_at).strftime('%A, %B %d, %Y · %H:%M UTC') }}</p><p class="muted" data-local-time="{{ aware(item.starts_at).isoformat() }}"></p>{% if item.ends_at %}<p><strong>Ends:</strong> {{ aware(item.ends_at).strftime('%B %d, %Y · %H:%M UTC') }}</p>{% endif %}</div>{% endif %}
+{% if item.starts_at %}<div class="event-meta"><p><strong>Starts:</strong> {{ localized_time(item.starts_at) }}</p><p class="muted" data-local-time="{{ aware(item.starts_at).isoformat() }}"></p>{% if item.ends_at %}<p><strong>Ends:</strong> {{ localized_time(item.ends_at) }}</p>{% endif %}</div>{% endif %}
 {% if item.location %}<p><strong>Location:</strong> {{ item.location }}</p>{% endif %}
-<div class="instructions">{{ item.body }}</div>
+<div class="instructions">{{ student_text(item.body) }}</div>
 {% if item.registration_url and (item.kind!='event' or aware(item.ends_at or item.starts_at)>=utcnow) %}{{ external(item.registration_url,'Register for this event' if item.kind=='event' else 'Learn more','blue') }}{% endif %}
 <p><a href="{{ url_for('updates') }}">← All events &amp; news</a></p>
 </article>

@@ -1,0 +1,6 @@
+'use strict';
+(()=>{if(document.body.classList.contains('admin-layout'))return;let zone=document.body.dataset.timezone;try{if(document.body.dataset.zoneManual!=='yes')zone=Intl.DateTimeFormat().resolvedOptions().timeZone||zone;}catch{}document.body.dataset.timezone=zone;document.querySelectorAll('[data-viewer-zone]').forEach(el=>el.textContent=zone);
+document.querySelectorAll('select[name=timezone]').forEach(input=>input.addEventListener('change',()=>{const form=input.closest('form');if(!form.querySelector('[name=zone_manual]')){const mark=document.createElement('input');mark.type='hidden';mark.name='zone_manual';mark.value='yes';form.append(mark);}}));
+if(zone&&document.body.dataset.zoneManual!=='yes')document.cookie='liontech_timezone='+encodeURIComponent(zone)+'; Path=/; Max-Age=31536000; SameSite=Lax; Secure';
+const csrf=document.querySelector('[name=csrf]')?.value;if(csrf&&zone&&document.body.classList.contains('student-layout')&&document.body.classList.contains('dashboard-layout')&&document.body.dataset.zoneManual!=='yes')fetch('/local-preferences',{method:'POST',credentials:'same-origin',headers:{'X-Requested-With':'localization','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf,timezone:zone})}).catch(()=>{});
+})();

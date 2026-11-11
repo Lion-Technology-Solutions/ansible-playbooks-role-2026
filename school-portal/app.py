@@ -503,6 +503,51 @@ class StudentPreference(db.Model):
     timezone=db.Column(db.String(60),default='America/Toronto',nullable=False)
 
 
+class StudentLocale(db.Model):
+    __tablename__='portal_student_locales'
+    student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
+    country=db.Column(db.String(80),nullable=False)
+    currency=db.Column(db.String(3),nullable=False)
+    timezone=db.Column(db.String(80),nullable=False)
+    country_confirmed=db.Column(db.Boolean,nullable=False,default=False)
+    timezone_confirmed=db.Column(db.Boolean,nullable=False,default=False)
+    timezone_manual=db.Column(db.Boolean,nullable=False,default=False)
+
+
+class LocalPaymentQuote(db.Model):
+    __tablename__='portal_local_payment_quotes'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    enrollment_id=db.Column(db.Integer,db.ForeignKey('portal_enrollments.id'),nullable=False,index=True)
+    stage=db.Column(db.Integer,nullable=False)
+    fingerprint=db.Column(db.String(64),nullable=False)
+    base_amount=db.Column(db.Numeric(16,3),nullable=False)
+    base_currency=db.Column(db.String(3),nullable=False)
+    currency=db.Column(db.String(3),nullable=False)
+    amount=db.Column(db.Numeric(16,3),nullable=False)
+    rate=db.Column(db.String(80),nullable=False)
+    as_of=db.Column(db.DateTime(timezone=True),nullable=False)
+    expires_at=db.Column(db.DateTime(timezone=True),nullable=False)
+    proof_id=db.Column(db.String(32),db.ForeignKey('portal_plan_payment_proofs.id'),unique=True)
+    manual_id=db.Column(db.String(32),db.ForeignKey('portal_manual_fee_payments.id'),unique=True)
+    credited=db.Column(db.Boolean,nullable=False,default=False)
+    enrollment=db.relationship('Enrollment')
+
+
+class LocalCheckout(db.Model):
+    __tablename__='portal_local_checkouts'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    quote_id=db.Column(db.String(32),db.ForeignKey('portal_local_payment_quotes.id'),nullable=False)
+    provider=db.Column(db.String(20),nullable=False)
+    reference=db.Column(db.String(100),nullable=False,unique=True,default=lambda:'LTL-'+secrets.token_hex(24))
+    provider_id=db.Column(db.String(255),unique=True)
+    transaction_id=db.Column(db.String(80),unique=True)
+    checkout_url=db.Column(db.Text)
+    paid=db.Column(db.Boolean,nullable=False,default=False)
+    test_mode=db.Column(db.Boolean,nullable=False,default=False)
+    needs_review=db.Column(db.Boolean,nullable=False,default=False)
+    quote=db.relationship('LocalPaymentQuote')
+
+
 class LessonCompletion(db.Model):
     __tablename__='portal_lesson_completions'
     student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
@@ -1129,7 +1174,11 @@ def create_app(config=None):
         if language not in ('en','es','fr') or zone not in TIMEZONES:abort(400)
         if g.student:
             pref=db.session.get(StudentPreference,g.student.id) or StudentPreference(student_id=g.student.id)
-            pref.language,pref.timezone=language,zone;db.session.add(pref);db.session.commit()
+            pref.language,pref.timezone=language,zone;db.session.add(pref)
+            if request.form.get('zone_manual')=='yes':
+                row=db.session.get(StudentLocale,g.student.id) or StudentLocale(student_id=g.student.id,country=g.student.country,currency=residence(g.student.country)['currency'],timezone=zone)
+                row.timezone=zone;row.timezone_confirmed=True;row.timezone_manual=True;db.session.add(row);session['browser_timezone']=zone
+            db.session.commit()
         session['ui_language'],session['ui_timezone']=language,zone
         destination=field('next',500,False)
         if not destination.startswith('/') or destination.startswith('//') or '\\' in destination or any(ord(c)<32 for c in destination):destination=url_for('portal' if g.student else 'home')
@@ -1517,7 +1566,9 @@ def create_app(config=None):
                 app.extensions['auth_security']['new_profile'](student,request.form.get('username',''))
                 record_policy_acceptance(student, 'password')
                 db.session.add(AccountRequest(student_id=student.id))
-                db.session.add(StudentPreference(student_id=student.id,language=language,timezone=residence(country)['timezone']))
+                if country!='Other':session['local_country']=country
+                if country!='Other':db.session.add(StudentLocale(student_id=student.id,country=country,currency=residence(country)['currency'],timezone=app.extensions['local_experience']['browser_zone']() or residence(country)['timezone'],country_confirmed=True,timezone_confirmed=bool(app.extensions['local_experience']['browser_zone']()),timezone_manual=bool(session.get('local_zone_manual'))))
+                db.session.add(StudentPreference(student_id=student.id,language=language,timezone=app.extensions['local_experience']['browser_zone']() or residence(country)['timezone']))
                 enrollment=None
                 if chosen_course:
                     enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' or chosen_course.slug=='data-analytics' else None)
@@ -2032,6 +2083,10 @@ def create_app(config=None):
     app.extensions['chatgpt_bridge']=install_bridge(app,db,globals(),dict(admin_required=admin_required))
     from portal_languages import install as install_languages
     app.extensions['portal_languages']=install_languages(app,db,globals())
+    from local_experience import install as install_local_experience
+    app.extensions['local_experience']=install_local_experience(app,db,globals())
+    from local_payments import install as install_local_payments
+    app.extensions['local_payments']=install_local_payments(app,db,globals(),dict(student_required=student_required,admin_required=admin_required,notify=notify))
     return app
 
 

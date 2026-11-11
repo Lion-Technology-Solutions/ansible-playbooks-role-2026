@@ -1,15 +1,1 @@
-{% if uses_link_plan(e) %}<p><a class="button red" href="{{ url_for('link_payment_plan',enrollment_id=e.id) }}">View Data Analytics payment plan · Start with USD 10.00 →</a></p><p>Pay through Flutterwave and submit your receipt for verification. The initial payment counts toward your program total.</p>{% else %}{% set payment=enrollment_checkout(e) %}
-<p><a class="button red" href="{{ url_for('global_payment',enrollment_id=e.id) }}">Enrollment fee · US$5.00 in your local currency →</a></p><div class="payment-box" id="payment-{{ e.id }}"><h4>Payment methods &amp; enrollment confirmation</h4><p>Payment status: <strong>{{ e.payment_status|replace('_',' ')|title }}</strong></p>
-{% if e.payment_status=='verified' %}
-  <p>Payment verified by your administrator.</p>{% if e.status=='approved' %}<p class="status success">Enrollment confirmed · Class access unlocked</p>{% else %}<p>Payment received. Your enrollment is awaiting final approval.</p>{% endif %}
-{% else %}
-  {% if payment %}<details><summary>Previously arranged payment option</summary><p>{{ payment[1] }}</p>{{ external(payment[0],payment[1],'red') }}<p class="muted">Open the secure payment page to choose from its available payment methods. This existing link may use a previous regional price; use the global enrollment-fee invoice above for the current US$5.00 fee.</p></details>
-  {% else %}<p>Contact support to arrange payment for this program and country.</p>{{ external(support_url,'Arrange enrollment payment','outline') }}{% endif %}
-  <p class="muted">Submit your payment receipt / transaction reference below. A reference or checkout click does not confirm payment; the administrator verifies it.</p>
-  <details><summary>Legacy payment reference</summary><form action="{{ url_for('payment',enrollment_id=e.id) }}" method="post">{{ token() }}<label>Student number<input name="student_number" maxlength="40" value="{{ g.student.student_number }}" required></label>
-    <label>Payment / transaction reference<input name="reference" maxlength="150" value="{{ e.payment_reference or '' }}" required></label>
-    <label>Payment details for the administrator<textarea name="note" maxlength="1000" rows="2" placeholder="Payer name, payment method and date">{{ e.payment_note }}</textarea></label>
-    <button class="button blue">{{ 'Update payment reference' if e.payment_status=='submitted' else 'Submit payment for verification' }}</button>
-  </form></details>
-{% endif %}</div>
-{% endif %}
+{% if uses_link_plan(e) %}<p><a class="button red" href="{{ url_for('link_payment_plan',enrollment_id=e.id) }}">View your payment schedule →</a></p>{% else %}<p><a class="button red" href="{{ url_for('global_payment',enrollment_id=e.id) }}">View enrollment payment · {{ display_money(5) }} →</a></p>{% endif %}

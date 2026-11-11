@@ -79,7 +79,7 @@ def install(app,db,m,h):
             if enrollment.status!='approved' and (not row or row.status!='overdue'):continue
             if enrollment.payment_status!='verified':continue
             pref=db.session.get(m['StudentPreference'],enrollment.student_id)
-            today=now().astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date()
+            today=now().astimezone(ZoneInfo('America/Toronto')).date()
             if isinstance(plan,m['EnrollmentPaymentSchedule']):
                 today=now().astimezone(ZoneInfo('America/Toronto')).date()
                 state=app.extensions['program_link_plans']['billing'](enrollment)

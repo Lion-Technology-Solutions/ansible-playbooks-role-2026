@@ -55,7 +55,7 @@ def send_class_email(student,lesson,calendar):
     from app import db,StudentPreference,ScheduledClass,aware
     pref=db.session.get(StudentPreference,student.id);detail=db.session.get(ScheduledClass,lesson.id)
     zone=pref.timezone if pref else 'America/Toronto'
-    local=aware(lesson.starts_at).astimezone(ZoneInfo(zone)).strftime('%B %d, %Y at %I:%M %p')+' · '+zone
+    local=current_app.extensions['local_experience']['time'](lesson.starts_at,student)
     link=ORIGIN+'/classes/'+str(lesson.id)
     body=f'Hello {student.name},\nYour class schedule has been updated.\nClass: {lesson.title}\nProgram: {lesson.course.name}\nYour time: {local}\nDuration: {detail.duration if detail else 120} minutes\nStudent number: {student.student_number}\nView class / Join: {link}\nSign in with your student account. Joining opens {detail.join_minutes if detail else 15} minutes before class and closes at its scheduled end. Paid, approved enrollment is required.\nThe attached calendar invitation uses this same secure portal link.'
     html='<p>'+escape(body).replace('\n','<br>')+'</p><p><a href="'+escape(link,quote=True)+'" style="display:inline-block;background:#0755db;color:white;padding:14px 24px;border-radius:8px;text-decoration:none">View class / Join</a></p>'

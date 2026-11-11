@@ -76,7 +76,7 @@ def test_registration_country_payments_dates_and_existing_students(app):
         course, cohort=analytics(app)
         assert b'Choose an available start date' in request_enrollment(client,course).data
         page=request_enrollment(client,course,cohort)
-        assert link in page.data
+        assert link not in page.data and b'View enrollment payment' in page.data
         assert client.get('/portal').status_code == 200
     existing=app.test_client()
     register(existing,email='existing@example.com',kind='existing')
@@ -307,17 +307,17 @@ def test_country_tuition_selected_program_details_and_admin_edit(app):
     admin(manager)
     course,cohort = analytics(app)
     page = request_enrollment(student,course,cohort)
-    assert b'30,000 FCFA' in page.data and b'3 months' in page.data
+    assert b'USD' not in page.data and b'3 months' in page.data
     assert b'Curriculum' in page.data and b'Power BI' in page.data
     assert b'My selected programs' in page.data
-    assert b'Saturday and Sunday' in page.data
+    assert b'Saturday' in page.data
     tuition_fields = {'tuition_'+str(i):'' for i in range(7)}
     tuition_fields['tuition_0']='12,000 FCFA per month'
     post(manager,'/admin',action='program_profile',course_id=course,duration='4 months',
          schedule='Saturday and Sunday, 4–6 PM America/Toronto',curriculum='Excel\nSQL\nCapstone project',**tuition_fields)
     page = student.get('/enrollments')
-    assert b'12,000 FCFA per month' in page.data and b'4 months' in page.data
-    assert '4–6 PM America/Toronto'.encode() in page.data and b'Capstone project' in page.data
+    assert b'USD' not in page.data and b'4 months' in page.data
+    assert b'local time zone' in page.data and b'Capstone project' in page.data
     assert b'30,000 FCFA' not in page.data
     # A future cold start must preserve the administrator's edited content.
     with app.app_context():

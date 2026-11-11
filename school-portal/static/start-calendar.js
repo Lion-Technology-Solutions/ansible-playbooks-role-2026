@@ -6,17 +6,17 @@
  const full=d=>d.toLocaleDateString(locale(),{weekday:'long',year:'numeric',month:'long',day:'numeric'});
  const addMonth=(date,offset)=>new Date(date.getFullYear(),date.getMonth()+offset,Math.min(date.getDate(),new Date(date.getFullYear(),date.getMonth()+offset+1,0).getDate()),12);
  for(const root of document.querySelectorAll('[data-start-picker]')){
-  const form=root.closest('form'),select=root.querySelector('[data-cohort-select]'),all=[...select.options].filter(o=>o.value).map(o=>({value:o.value,label:o.textContent,course:o.dataset.course,date:o.dataset.date,program:o.dataset.program}));
+  const form=root.closest('form'),select=root.querySelector('[data-cohort-select]'),all=[...select.options].filter(o=>o.value).map(o=>({value:o.value,label:o.textContent,course:o.dataset.course,date:o.dataset.date,program:o.dataset.program,deadlines:JSON.parse(o.dataset.deadlines)}));
   const ui=root.querySelector('[data-calendar-ui]'),month=root.querySelector('[data-calendar-month]'),days=root.querySelector('[data-calendar-days]'),selection=root.querySelector('[data-calendar-selection]'),preview=root.querySelector('[data-calendar-payments]');
   let options=[],months=[],activeMonth='';
   const course=()=>root.dataset.fixedCourse||form.querySelector('[name="course_id"]:checked')?.value||form.querySelector('[name="course_id"]')?.value;
   function payments(option){
    preview.hidden=!option||option.program!=='data-analytics';if(preview.hidden)return;
    const start=parse(option.date),balance=new Date(start);balance.setDate(balance.getDate()+7);
-   const dates=[parse(root.dataset.today),balance,addMonth(balance,1),addMonth(balance,2)];
-   const labels=['Enrollment payment — due immediately','Balance of first payment','Second payment','Final payment'],amounts=['10.00','9.99','19.99','19.99'];
+   const dates=option.deadlines.map(value=>new Date(value));
+   const labels=['Enrollment payment — due immediately','Balance of first payment','Second payment','Final payment'],amounts=[root.dataset.enrollmentPrice,root.dataset.balancePrice,root.dataset.secondPrice,root.dataset.finalPrice];
    const list=root.querySelector('[data-calendar-payment-list]');list.replaceChildren();
-   dates.forEach((date,index)=>{const li=document.createElement('li'),strong=document.createElement('strong'),detail=document.createElement('span');strong.textContent=`${labels[index]}: USD ${amounts[index]}`;detail.textContent=full(date);li.append(strong,document.createElement('br'),detail);list.append(li);});
+   dates.forEach((date,index)=>{const li=document.createElement('li'),strong=document.createElement('strong'),detail=document.createElement('span');strong.textContent=`${labels[index]}: ${amounts[index]}`;detail.textContent=new Intl.DateTimeFormat(locale(),{dateStyle:'long',timeStyle:'short',timeZone:document.body.dataset.timezone}).format(date)+' · '+document.body.dataset.timezone;li.append(strong,document.createElement('br'),detail);list.append(li);});
   }
   function render(){
    const first=parse(activeMonth+'-01'),last=new Date(first.getFullYear(),first.getMonth()+1,0,12),offset=(first.getDay()+6)%7,byDate=new Map(options.map(o=>[o.date,o]));

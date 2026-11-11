@@ -30,7 +30,9 @@ def setup(app,country='Canada'):
 
 
 def manual(client,iid,number,**extra):
-    values={'csrf':csrf(client,'/portal'),'student_number':number,'amount':'7.00','currency':'CAD','method':'Bank transfer','reference':'LOCAL-TRANSFER-1','note':'Payment proof','receipt':(io.BytesIO(b'%PDF-1.7\nReceipt'),'receipt.pdf')}
+    page=client.get('/payments/enrollment/1',follow_redirects=True).data
+    quote_id=re.search(rb'name="local_quote_id" value="([^"]+)"',page)[1].decode()
+    values={'csrf':csrf(client,'/portal'),'local_quote_id':quote_id,'student_number':number,'amount':'7.00','currency':'CAD','method':'Bank transfer','reference':'LOCAL-TRANSFER-1','note':'Payment proof','receipt':(io.BytesIO(b'%PDF-1.7\nReceipt'),'receipt.pdf')}
     values.update(extra)
     return client.post(f'/payments/{iid}/manual',data=values,follow_redirects=True)
 
@@ -49,13 +51,14 @@ def test_worldwide_residences_currency_rounding_and_cache(app):
     assert converted(5,'JPY','153.987')==Decimal('770')
     assert converted(5,'KWD','.305')==Decimal('1.525')
     assert client.get('/localization?country=Invented').status_code==400
-    page=client.get('/register');assert b'Japan' in page.data and b'Brazil' in page.data and b'US$5.00' in page.data
+    page=client.get('/register');assert b'Japan' in page.data and b'Brazil' in page.data and b'US$5.00' not in page.data
 
 
 def test_rate_failure_never_invents_exchange_rate_and_keeps_reference_timestamp(app):
+    app.config['FX_PROVIDER']=None
     client=app.test_client()
     r=client.get('/localization?country=Japan');assert r.json['available'] is False and r.json['currency']=='JPY'
-    assert '5.00' in r.json['fee']
+    assert '5.00' not in r.json['fee'] and not r.json['available']
     with app.app_context():
         row=db.session.get(FxSnapshot,1);row.rates={'JPY':'150'};row.as_of=now()-timedelta(days=3);row.checked_at=now()-timedelta(days=2);db.session.commit()
     app.config['FX_PROVIDER']=lambda:(_ for _ in ()).throw(ValueError('Outage'))
@@ -75,7 +78,7 @@ def test_residence_changes_and_legacy_prices_preserved(app):
         assert db.session.get(BillingSelection,eid).currency=='USD'
     post(manager,'/admin/pricing/global',course_id=course,total='120.00',installments='3',full_url='',installment_url='')
     with app.app_context():assert db.session.get(BillingSelection,eid).total==100
-    assert b'USD base' in student.get('/portal').data
+    assert b'USD' not in student.get('/portal').data
 
 
 def test_manual_receipt_number_is_owned_private_and_approval_books_only_fee(app):
@@ -110,7 +113,7 @@ def test_fee_does_not_reduce_full_tuition_balance(app):
     manual(student,iid,number)
     with app.app_context():pid=db.session.scalar(select(ManualFeePayment.id))
     post(manager,f'/admin/payments/{pid}/review',decision='approve',funds_verified='yes')
-    page=student.get(f'/apply/payment/{eid}');assert b'Remaining: USD 100.00' in page.data
+    page=student.get(f'/apply/payment/{eid}');assert b'140.00' in page.data and b'USD' not in page.data
     page=manager.get('/admin?currency=USD');assert b'5.00' in page.data and b'100.00' in page.data and b'105.00' in page.data
 
 
@@ -125,7 +128,7 @@ def test_receipt_validation_and_legacy_reference_needs_owned_number(app):
 
 
 def test_card_activation_requires_signed_verified_matching_provider_payment(app,monkeypatch):
-    student,manager,course,cohort,eid,iid,number=setup(app)
+    student,manager,course,cohort,eid,iid,number=setup(app,'United States')
     assert student.post(f'/payments/{iid}/checkout',data={'csrf':csrf(student,'/portal'),'student_number':number}).status_code==503
     monkeypatch.setenv('STRIPE_SECRET_KEY','test_key');monkeypatch.setenv('STRIPE_WEBHOOK_SECRET','test_webhook')
     actual={'id':'cs_test_verified','status':'open','url':'https://checkout.stripe.com/c/pay/test','currency':'usd','amount_total':500,'payment_status':'unpaid','client_reference_id':number,'metadata':{'invoice_id':iid}}
@@ -221,8 +224,11 @@ def test_local_card_presentment_and_safe_unsupported_precision(app,monkeypatch,c
         seen.append(payload);return {'id':'cs_local','url':'https://checkout.stripe.com/c/pay/local'}
     app.config['STRIPE_REQUEST']=stripe
     result=student.post(f'/payments/{iid}/checkout',data={'csrf':csrf(student,'/portal'),'student_number':number})
+    if currency=='KWD':
+        assert result.status_code==302 and not seen
+        return
     assert result.status_code==303
-    expected_currency='usd' if currency=='KWD' else currency.lower()
+    expected_currency=currency.lower()
     assert seen[0]['line_items[0][price_data][currency]']==expected_currency
     assert seen[0]['line_items[0][price_data][unit_amount]']==minor
     with app.app_context():
