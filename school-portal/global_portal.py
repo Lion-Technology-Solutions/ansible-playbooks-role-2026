@@ -18,6 +18,8 @@ from file_storage import validate_image
 from providers import ORIGIN, setting, stripe_request, signed_stripe_event, zoom_request, send_class_email
 
 
+MANUAL_PAYMENT_METHODS=('Bank transfer','Bank deposit','Mobile money','MTN Mobile Money','Orange Money','Interac e-Transfer','Cash','Other')
+
 def install(app,db,m,h):
     M=lambda key:m[key]
     Fx,Invoice,Manual,Checkout=(M(k) for k in ('FxSnapshot','FeeInvoice','ManualFeePayment','CardCheckout'))
@@ -138,7 +140,7 @@ def install(app,db,m,h):
         enrollment=owner_enrollment(enrollment_id)
         if app.extensions['program_link_plans']['ensure'](enrollment):return redirect(url_for('link_payment_plan',enrollment_id=enrollment.id))
         invoice=invoice_for(enrollment)
-        return render_template('global_payment.html',e=enrollment,invoice=invoice,fee=local_money(invoice.amount_usd,g.student.country),location=residence(g.student.country),manuals=db.session.scalars(select(Manual).where(Manual.invoice_id==invoice.id).order_by(Manual.created_at.desc())).all(),card_record=db.session.scalar(select(Checkout).where(Checkout.invoice_id==invoice.id)),card_ready=provider_ready('card'),charge=presentment(invoice,g.student.country))
+        return render_template('global_payment.html',e=enrollment,invoice=invoice,fee=local_money(invoice.amount_usd,g.student.country),location=residence(g.student.country),manuals=db.session.scalars(select(Manual).where(Manual.invoice_id==invoice.id).order_by(Manual.created_at.desc())).all(),card_record=db.session.scalar(select(Checkout).where(Checkout.invoice_id==invoice.id)),card_ready=provider_ready('card'),charge=presentment(invoice,g.student.country),manual_payment_methods=MANUAL_PAYMENT_METHODS)
 
     @app.post('/payments/verify-student')
     @student_required()
@@ -159,7 +161,7 @@ def install(app,db,m,h):
             if invoice.status!='pending':raise ValueError('This invoice no longer needs a payment submission.')
             reference=field('reference',150);currency=field('currency',3);method=field('method',40)
             amount=Decimal(field('amount',25))
-            if currency not in CURRENCIES or not amount.is_finite() or not 0<amount<=Decimal('999999999999.999') or amount.as_tuple().exponent < -3 or method not in ('Bank transfer','Mobile money','Other'):raise ValueError('Enter a valid payment amount, currency and method.')
+            if currency not in CURRENCIES or not amount.is_finite() or not 0<amount<=Decimal('999999999999.999') or amount.as_tuple().exponent < -3 or method not in MANUAL_PAYMENT_METHODS:raise ValueError('Enter a valid payment amount, currency and method.')
             if db.session.scalar(select(Manual.id).where(Manual.reference==reference)):raise ValueError('That transaction reference was already submitted. Contact support if a correction is needed.')
             proof=request.files.get('receipt')
             if not proof or not proof.filename:raise ValueError('Attach a PDF, JPG or PNG receipt up to 2 MB.')

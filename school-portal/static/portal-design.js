@@ -18,3 +18,14 @@
   window.addEventListener('hashchange', updateNavigation);
   updateNavigation();
 })();
+
+// Keep the chosen local method on the existing invoice-bound receipt form.
+document.addEventListener('click', event => {
+  const link = event.target.closest('[data-payment-method]');
+  if (!link) return;
+  const field = document.querySelector('[data-manual-payment] select[name="method"]');
+  if (field && [...field.options].some(option => option.value === link.dataset.paymentMethod)) {
+    field.value = link.dataset.paymentMethod;
+    field.dispatchEvent(new Event('change', {bubbles: true}));
+  }
+});

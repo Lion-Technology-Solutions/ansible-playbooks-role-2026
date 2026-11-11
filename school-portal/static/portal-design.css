@@ -52,3 +52,21 @@
 .portal-design .live-class.class-locked{border-left-color:var(--portal-yellow)}
 @media(max-width:900px){.portal-design .learning-workspace,.portal-design .payment-workspace{grid-template-columns:1fr}.portal-design .curriculum-panel{position:static}.portal-design .payment-action-card{grid-row:1}}
 @media(max-width:640px){.portal-design .receipt-upload,.portal-design .receipt-review{padding:16px}.portal-design .security-panel{padding:24px}.portal-design .welcome-paths{grid-template-columns:1fr}}
+
+/* Branded payment methods; real invoice/provider state controls every action. */
+.portal-design .method-workspace{display:grid;grid-template-columns:minmax(0,1.76fr) minmax(280px,1fr);gap:24px;align-items:start;margin:24px 0 32px}
+.portal-design .method-chooser h2{margin-top:0}.portal-design .method-group{margin-top:24px}.portal-design .method-group h3{font-size:.9375rem;margin:0 0 16px}
+.portal-design .method-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+.portal-design .method-option{min-width:0;background:var(--portal-surface);border:1px solid var(--portal-line);border-radius:12px;overflow:hidden}
+.portal-design .method-option summary{display:flex;flex-direction:column;gap:8px;padding:18px;cursor:pointer;list-style:none;min-height:156px}
+.portal-design .method-option summary::-webkit-details-marker{display:none}.portal-design .method-option summary:focus-visible{outline:3px solid var(--portal-blue);outline-offset:-4px;border-radius:12px}
+.portal-design .method-option[open]{border-color:var(--portal-blue);box-shadow:0 0 0 1px var(--portal-blue)}.portal-design .method-option[open] summary{background:var(--portal-pale)}
+.portal-design .method-option summary strong{font-size:1rem;line-height:1.45}.portal-design .method-logo{display:flex;width:100px;height:36px;align-items:center;justify-content:center;margin-bottom:4px}
+.portal-design .method-logo img{display:block;width:100px;height:36px;object-fit:contain;max-width:none}
+.portal-design .method-description{font-size:.75rem;line-height:1.5;color:var(--portal-muted)}.portal-design .method-status{font-size:.6875rem;font-weight:700;line-height:1.5;color:var(--portal-blue);margin-top:auto}
+.portal-design .method-instructions{padding:18px;border-top:1px solid var(--portal-line);font-size:.8125rem;line-height:1.6}.portal-design .method-instructions p{margin:0 0 16px}.portal-design .method-instructions .button{font-size:.8125rem;white-space:normal;text-align:center;min-width:0}
+.portal-design .method-proof-link{display:block;margin-top:16px}.portal-design .method-summary{position:sticky;top:24px}.portal-design .method-summary .method-total{font-size:2rem;font-weight:700;letter-spacing:-.04em;line-height:1.3;margin:12px 0 20px}.portal-design .method-summary h3{font-size:1.25rem}.portal-design .method-summary ol{padding-left:20px;line-height:1.8}.portal-design .method-summary .muted{font-size:.75rem;line-height:1.6}
+@media(max-width:1000px){.portal-design .method-workspace{grid-template-columns:1fr}.portal-design .method-summary{position:static;grid-row:1}}
+@media(max-width:640px){.portal-design .method-grid{grid-template-columns:1fr}.portal-design .method-workspace{gap:18px}.portal-design .method-chooser,.portal-design .method-summary{padding:24px}.portal-design .method-summary .method-total{font-size:1.875rem}.portal-design .method-option summary{min-height:150px}}
+.portal-design .method-option summary{box-sizing:border-box}.portal-design .method-description{font-weight:400}
+@media(max-width:640px){.portal-design .method-summary{padding:20px}.portal-design .method-summary .account-details,.portal-design .method-summary h3,.portal-design .method-summary ol,.portal-design .method-summary .muted,.portal-design .method-summary>.button{display:none}.portal-design .method-summary .method-total{margin:8px 0 12px}.portal-design .method-summary>p{font-size:.8125rem}}
