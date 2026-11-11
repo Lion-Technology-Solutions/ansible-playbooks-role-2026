@@ -1,0 +1,11 @@
+<section class="start-calendar" data-start-picker data-fixed-course="{{ calendar_course_id|default('') }}" data-today="{{ academy_date().isoformat() }}">
+  <h3>Choose your preferred start date</h3>
+  <p data-calendar-hint>Choose an available program intake. Dates follow Toronto time.</p>
+  <div data-calendar-ui hidden>
+    <div class="calendar-navigation"><button type="button" data-calendar-previous aria-label="Previous month">←</button><label>Month<select data-calendar-month aria-label="Start date month"></select></label><button type="button" data-calendar-next aria-label="Next month">→</button></div>
+    <table class="calendar-month"><caption data-calendar-caption></caption><thead><tr>{% for day in ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'] %}<th scope="col">{{ day }}</th>{% endfor %}</tr></thead><tbody data-calendar-days></tbody></table>
+    <p class="calendar-selection" data-calendar-selection role="status" aria-live="polite">Select an available date to continue.</p>
+    <section class="calendar-payment-preview" data-calendar-payments hidden aria-label="Estimated payment schedule"><strong>Your payment schedule</strong><ol data-calendar-payment-list></ol><p>Total: USD 59.97. The enrollment payment is included.</p></section>
+  </div>
+  <label data-calendar-fallback>Preferred start date<select name="cohort_id" data-cohort-select required><option value="">Choose an upcoming start</option>{% for cohort in calendar_cohorts %}<option value="{{ cohort.id }}" data-course="{{ cohort.course_id }}" data-date="{{ cohort.start_date.isoformat() }}" data-program="{{ cohort.course.slug }}">{{ cohort.course.name }} · {{ cohort.start_date.strftime('%A, %B %d, %Y') }}</option>{% endfor %}</select></label>
+</section>

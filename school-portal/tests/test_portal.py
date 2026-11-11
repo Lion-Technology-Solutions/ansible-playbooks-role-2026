@@ -81,12 +81,12 @@ def test_registration_country_payments_dates_and_existing_students(app):
     existing=app.test_client()
     register(existing,email='existing@example.com',kind='existing')
     page=existing.get('/enrollments')
-    assert b'name="cohort_id"' not in page.data
-    request_enrollment(existing,course)
+    assert b'name="cohort_id"' in page.data
+    request_enrollment(existing,course,cohort)
     with app.app_context():
         s=db.session.scalar(select(Student).where(Student.email=='existing@example.com'))
         e=db.session.scalar(select(Enrollment).where(Enrollment.student_id==s.id))
-        assert e.cohort_id is None
+        assert e.cohort_id == cohort
         assert s.approved
         assert 'student-password' not in s.password_hash
     duplicate=app.test_client()
@@ -276,7 +276,7 @@ def test_rolling_weekend_dates_and_toronto_midnight(monkeypatch):
     assert next_start_dates() == [date(2026,11,8),date(2026,11,14)]
 
 
-def test_every_program_has_two_starts_and_rejects_unoffered_date(app):
+def test_program_intakes_follow_published_calendar_and_reject_unoffered_date(app):
     student = app.test_client()
     register(student)
     page = student.get('/enrollments')
@@ -284,7 +284,8 @@ def test_every_program_has_two_starts_and_rejects_unoffered_date(app):
         courses = list(db.session.scalars(select(Course)))
         for course in courses:
             dates = list(db.session.scalars(select(Cohort.start_date).where(Cohort.course_id==course.id).order_by(Cohort.start_date)))
-            assert dates == next_start_dates()
+            from app import available_start_dates
+            assert dates == available_start_dates(course)
         devops = next(c for c in courses if c.slug=='devops')
         analytics_course = next(c for c in courses if c.slug=='data-analytics')
         db.session.add(Cohort(course_id=devops.id, start_date=date(2020,1,1), label='Old intake'))

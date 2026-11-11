@@ -7,14 +7,14 @@
   <dl>
     <div><dt>Duration</dt><dd>{{ course.profile.duration or 'Contact LionTech for the program duration.' }}</dd></div>
     <div><dt>Tuition · {{ country }}</dt><dd>{% set offer=offer_for(course.id,country) %}{% if offer %}{% if offer.currency=='USD' %}{% set local=local_money(offer.total,country) %}{{ local.local }}{% if local.available %} {{ local.currency }}{% endif %} (USD base: {{ local.usd }}; local reference estimate){% else %}{{ offer.currency }} {{ '%.2f'|format(offer.total) }}{% endif %}{% if program_payment_policy(course) %} · enrollment payment included{% elif offer.installments>1 %} · {{ offer.installments }} monthly payments available{% endif %}{% else %}{{ course.profile.tuition.get(country) or course.profile.tuition.get('Other') or 'Contact LionTech for current tuition and payment options.' }}{% endif %}</dd></div>
-    <div><dt>Schedule</dt><dd>New batches start every Saturday and Sunday. {{ course.profile.schedule or 'Your class time and timezone will be confirmed by LionTech.' }}</dd></div>
+    <div><dt>Schedule</dt><dd>{{ 'New intakes start every Saturday.' if course.slug=='data-analytics' else 'New batches start every Saturday and Sunday.' }} {{ course.profile.schedule or 'Your class time and timezone will be confirmed by LionTech.' }}</dd></div>
   </dl>
   {% set policy=program_payment_policy(course) %}{% if policy %}{% include 'link_plan_summary.html' %}{% else %}  {% set fee=local_money(5,country) %}<p><strong>Enrollment fee: {{ fee.local }}{% if fee.available %} {{ fee.currency }}{% endif %}</strong> · USD base: US$5.00 · separate from tuition. {% if fee.currency!='USD' %}Local reference estimate.{% endif %} <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">Rates by ExchangeRate-API</a></p>
 {% endif %}
   <h4>Curriculum</h4>
   {% if course.profile.curriculum %}<ul>{% for topic in course.profile.curriculum.splitlines() if topic.strip() %}<li>{{ topic }}</li>{% endfor %}</ul>{% else %}<p>Contact LionTech for the curriculum.</p>{% endif %}
   <h4>Next two start dates</h4>
-  <div class="intake-dates">{% for start in starts if start.course_id == course.id %}<span class="intake-date">{{ start.start_date.strftime('%A, %B %d, %Y') }}</span>{% endfor %}</div>
+  <div class="intake-dates">{% for start in (starts|selectattr('course_id','equalto',course.id)|list)[:2] %}<span class="intake-date">{{ start.start_date.strftime('%A, %B %d, %Y') }}</span>{% endfor %}</div>
   <p class="muted">Dates follow Toronto time. Each date is a separate batch start.</p>
 </div>
 {% endmacro %}

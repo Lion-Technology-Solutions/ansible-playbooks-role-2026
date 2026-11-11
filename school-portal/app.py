@@ -956,17 +956,24 @@ def next_start_dates(today=None):
     return dates
 
 
+def available_start_dates(course,today=None):
+    from start_dates import analytics_starts
+    day=today or academy_today()
+    return analytics_starts(day) if course.slug=='data-analytics' else next_start_dates(day)
+
+
 def upcoming_cohorts():
-    dates = next_start_dates()
+    available={course.id:available_start_dates(course) for course in db.session.scalars(select(Course)).all()}
     with db.engine.begin() as connection:
         if connection.dialect.name == 'postgresql':
             connection.execute(text('SELECT pg_advisory_xact_lock(73592027)'))
         table = Cohort.__table__
-        for course_id in connection.execute(select(Course.id)).scalars():
-            for start in dates:
-                if not connection.execute(select(table.c.id).where(table.c.course_id == course_id, table.c.start_date == start)).first():
-                    connection.execute(table.insert().values(course_id=course_id, start_date=start, label='Weekend intake'))
-    return db.session.scalars(select(Cohort).where(Cohort.start_date.in_(dates)).order_by(Cohort.start_date)).all()
+        for course_id,dates in available.items():
+            stored=set(connection.execute(select(table.c.start_date).where(table.c.course_id==course_id,table.c.start_date.in_(dates))).scalars())
+            missing=[dict(course_id=course_id,start_date=start,label='Weekend intake') for start in dates if start not in stored]
+            if missing:connection.execute(table.insert(),missing)
+    rows=db.session.scalars(select(Cohort).order_by(Cohort.start_date,Cohort.id)).all()
+    return [row for row in rows if row.start_date in available.get(row.course_id,[])]
 
 
 def create_app(config=None):
@@ -1058,7 +1065,7 @@ def create_app(config=None):
                     completion_url=whatsapp('Project completed'), account_request_url=account_request_url,
                     **app.extensions.get('global_experience',{}),
                     countries=COUNTRIES, legacy_countries=LEGACY_COUNTRIES, payments=PAYMENTS, course_payment=course_payment, account_whatsapp=account_whatsapp, auth_account_status=auth_account_status,
-                    branding=db.session.get(SiteBranding,1), utcnow=now(), aware=aware,
+                    branding=db.session.get(SiteBranding,1), utcnow=now(), aware=aware, academy_date=academy_today,
                     ui_language=language,ui_timezone=timezone,timezones=TIMEZONES,currencies=CURRENCIES,
                     t=lambda text:translated(text,language),current_path=request.full_path.rstrip('?'),
                     billing_for=billing_data,
@@ -1149,11 +1156,11 @@ def create_app(config=None):
         except ValueError:abort(400)
         course=db.get_or_404(Course,course_id)
         cohort=db.get_or_404(Cohort,cohort_id)
-        if not course.publication.published or cohort.course_id!=course.id or cohort.start_date not in next_start_dates():abort(400)
+        if not course.publication.published or cohort.course_id!=course.id or cohort.start_date not in available_start_dates(course):abort(400)
         if g.student:
             enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==g.student.id,Enrollment.course_id==course.id))
             if not enrollment:
-                enrollment=Enrollment(student_id=g.student.id,course_id=course.id,cohort_id=cohort.id if g.student.kind=='new' else None)
+                enrollment=Enrollment(student_id=g.student.id,course_id=course.id,cohort_id=cohort.id if g.student.kind=='new' or course.slug=='data-analytics' else None)
                 db.session.add(enrollment);db.session.commit()
             return redirect(url_for('global_payment',enrollment_id=enrollment.id))
         session['application']={'course_id':course.id,'cohort_id':cohort.id}
@@ -1497,7 +1504,7 @@ def create_app(config=None):
                 if application:
                     chosen_course=db.session.get(Course,application.get('course_id'))
                     chosen_cohort=db.session.get(Cohort,application.get('cohort_id'))
-                    if not chosen_course or not chosen_course.publication.published or not chosen_cohort or chosen_cohort.course_id!=chosen_course.id or chosen_cohort.start_date not in next_start_dates():
+                    if not chosen_course or not chosen_course.publication.published or not chosen_cohort or chosen_cohort.course_id!=chosen_course.id or chosen_cohort.start_date not in available_start_dates(chosen_course):
                         raise ValueError('Choose a current program and batch from the enrollment page before creating your account.')
                 language=request.form.get('language')
                 if language in (None,'','auto'):language=residence(country)['language']
@@ -1513,7 +1520,7 @@ def create_app(config=None):
                 db.session.add(StudentPreference(student_id=student.id,language=language,timezone=residence(country)['timezone']))
                 enrollment=None
                 if chosen_course:
-                    enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' else None)
+                    enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' or chosen_course.slug=='data-analytics' else None)
                     db.session.add(enrollment)
                 db.session.commit()
                 flash(f'Your student number is {student.student_number}. Email verification activates your account; verified payment activates enrollment.')
@@ -1583,11 +1590,11 @@ def create_app(config=None):
                     raise ValueError('This course is not currently accepting new enrollments.')
                 cohort_id = request.form.get('cohort_id', '')
                 cohort = None
-                if g.student.kind == 'new':
+                if g.student.kind == 'new' or course.slug=='data-analytics':
                     if not cohort_id:
                         raise ValueError('Choose an available start date for your course.')
                     cohort = db.get_or_404(Cohort, int(cohort_id))
-                    if cohort.course_id != course.id or cohort.start_date not in next_start_dates():
+                    if cohort.course_id != course.id or cohort.start_date not in available_start_dates(course):
                         raise ValueError('Choose a valid upcoming start date.')
                 enrollment = Enrollment(student_id=g.student.id, course_id=course.id, cohort_id=cohort.id if cohort else None)
                 db.session.add(enrollment)

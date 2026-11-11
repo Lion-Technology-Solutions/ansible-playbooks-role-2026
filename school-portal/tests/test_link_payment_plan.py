@@ -39,7 +39,9 @@ def test_exact_plan_is_published_and_no_extra_enrollment_fee(app):
         plan=db.session.get(EnrollmentPaymentSchedule,eid)
         assert plan.total==Decimal('59.97') and [p['amount'] for p in plan.stages]==['10.00','9.99','19.99','19.99']
         assert all(part['due'] for part in plan.stages)
-        assert date.fromisoformat(plan.stages[1]['due'])==date.fromisoformat(plan.stages[0]['due'])+timedelta(days=7)
+        assert date.fromisoformat(plan.stages[1]['due'])==date.fromisoformat(plan.stages[0]['first_class'])+timedelta(days=7)
+        from app import academy_today
+        assert date.fromisoformat(plan.stages[0]['due'])==academy_today()
         assert db.session.scalar(select(FeeInvoice)).amount_usd==Decimal('10.00')
         assert not db.session.get(BillingSelection,eid)
     page=app.test_client().get('/courses/data-analytics').data
@@ -153,7 +155,7 @@ def test_existing_link_plan_dates_backfill_once_without_repricing_or_drifting(ap
     student,manager,eid=setup_plan(app)
     with app.app_context():
         plan=db.session.get(EnrollmentPaymentSchedule,eid)
-        original=[dict(part,due='2027-01-14' if index==0 else None) for index,part in enumerate(plan.stages)]
+        original=[dict({k:v for k,v in part.items() if k!='first_class'},due='2027-01-14' if index==0 else None) for index,part in enumerate(plan.stages)]
         plan.stages=original;db.session.commit()
         with db.engine.begin() as connection:seed_policy(connection,vars(module))
         db.session.expire_all();plan=db.session.get(EnrollmentPaymentSchedule,eid)
@@ -175,8 +177,8 @@ def test_each_student_has_individual_dates_and_signup_previews_selected_start(ap
     second=app.test_client();register(second,email='another@example.com')
     with app.app_context():
         enrollment=db.session.get(Enrollment,eid);cid=enrollment.course_id
-        from app import next_start_dates
-        other_cohort=db.session.scalar(select(Cohort).where(Cohort.course_id==cid,Cohort.start_date==next_start_dates()[1]));cohort_id=other_cohort.id
+        from app import available_start_dates
+        other_cohort=db.session.scalar(select(Cohort).where(Cohort.course_id==cid,Cohort.start_date==available_start_dates(enrollment.course)[1]));cohort_id=other_cohort.id
         first_dates=list(db.session.get(EnrollmentPaymentSchedule,eid).stages)
     request_enrollment(second,cid,cohort_id)
     with app.app_context():
@@ -184,7 +186,8 @@ def test_each_student_has_individual_dates_and_signup_previews_selected_start(ap
     second.get('/payments/plans/'+str(other_id))
     with app.app_context():
         other_plan=db.session.get(EnrollmentPaymentSchedule,other_id)
-        assert other_plan.stages[0]['due']!=first_dates[0]['due']
+        assert other_plan.stages[0]['first_class']!=first_dates[0]['first_class']
+        assert other_plan.stages[1]['due']!=first_dates[1]['due']
         expected=[date.fromisoformat(p['due']).strftime('%B %d, %Y').encode() for p in other_plan.stages]
     visitor=app.test_client()
     visitor.post('/apply/choose',data={'csrf':csrf(visitor,'/apply'),'course_id':cid,'cohort_id':cohort_id})
@@ -199,8 +202,9 @@ def test_unknown_start_waits_for_assignment_and_then_gets_dates(app):
     with app.app_context():
         enrollment=db.session.get(Enrollment,eid);enrollment.cohort=None
         plan=db.session.get(EnrollmentPaymentSchedule,eid)
-        plan.stages=[dict(p,due=None) for p in plan.stages];db.session.commit()
-        assert all(part['due'] is None for part in app.extensions['program_link_plans']['billing'](enrollment)['parts'])
+        plan.stages=[dict(p,first_class=None) if i==0 else dict(p,due=None) for i,p in enumerate(plan.stages)];db.session.commit()
+        state=app.extensions['program_link_plans']['billing'](enrollment)
+        assert state['parts'][0]['due'] and all(part['due'] is None for part in state['parts'][1:])
         from app import Cohort
         enrollment.cohort=db.session.scalar(select(Cohort).where(Cohort.course_id==enrollment.course_id));db.session.commit()
         assert all(part['due'] for part in app.extensions['program_link_plans']['billing'](enrollment)['parts'])

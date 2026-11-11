@@ -16,14 +16,14 @@
 {% for e in requested %}{% set payment=course_payment(e.course,g.student.country) %}
 <article class="panel">
   <div class="heading-row"><h3>{{ e.course.name }}</h3><span class="status {{ 'success' if e.status == 'approved' else 'pending' }}">{{ e.status|title }}</span></div>
-  {% if g.student.kind == 'new' %}<p><strong>Your selected start:</strong> {{ e.cohort.start_date.strftime('%A, %B %d, %Y') if e.cohort else 'Contact support to confirm your start date.' }}</p>{% endif %}
+  {% if e.cohort %}<p><strong>Your selected start:</strong> {{ e.cohort.start_date.strftime('%A, %B %d, %Y') if e.cohort else 'Contact support to confirm your start date.' }}</p>{% endif %}
   {{ program_details(e.course, g.student.country, cohorts) }}
   {% include 'enrollment_payment.html' %}
 </article>
 {% endfor %}
 </section>
 {% endif %}
-<div class="section-heading"><div><p class="eyebrow">EXPLORE THE PROGRAMS</p><h2>Choose your next skill.</h2></div><p>New batches every Saturday and Sunday.</p></div>
+<div class="section-heading"><div><p class="eyebrow">EXPLORE THE PROGRAMS</p><h2>Choose your next skill.</h2></div><p>Choose a program and your preferred available start date.</p></div>
 <section class="two-col">
 {% for c in courses %}
 <article class="panel">
@@ -32,7 +32,7 @@
   {% if c.id in requested_ids %}<span class="status success">Enrollment already requested</span>
   {% else %}
   <form method="post">{{ token() }}<input type="hidden" name="course_id" value="{{ c.id }}">
-    {% if g.student.kind == 'new' %}<label>Choose your batch start<select name="cohort_id" required><option value="">Choose your intake</option>{% for start in cohorts if start.course_id == c.id %}<option value="{{ start.id }}">{{ start.start_date.strftime('%A, %B %d, %Y') }}</option>{% endfor %}</select></label>
+    {% if g.student.kind == 'new' or c.slug=='data-analytics' %}{% set calendar_cohorts=cohorts|selectattr('course_id','equalto',c.id)|list %}{% set calendar_course_id=c.id %}{% include 'start_calendar.html' %}
     {% else %}<p class="muted">Existing students continue with their current batch; a new start date is not required.</p>{% endif %}
     <button class="button blue">Enroll in {{ c.name }} →</button>
   </form>

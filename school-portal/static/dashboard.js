@@ -6,6 +6,7 @@ document.querySelectorAll('[data-close-sidebar]').forEach(button=>button.addEven
 document.querySelectorAll('.dashboard-sidebar nav a').forEach(link=>link.addEventListener('click',closeSidebar));
 document.addEventListener('keydown',event=>{if(event.key==='Escape')closeSidebar();});
 for(const element of document.querySelectorAll('progress[data-value]'))element.value=Number(element.dataset.value)||0;
-for(const card of document.querySelectorAll('[data-course-option]')){const radio=card.querySelector('input[type="radio"]');if(radio)radio.addEventListener('change',()=>{document.querySelectorAll('[data-course-option]').forEach(item=>item.classList.toggle('selected',item.querySelector('input').checked));const select=document.querySelector('[data-cohort-select]');if(select){select.querySelectorAll('option[data-course]').forEach(option=>{option.hidden=option.dataset.course!==radio.value;option.disabled=option.hidden;});select.value='';}});}
+for(const card of document.querySelectorAll('[data-course-option]')){const radio=card.querySelector('input[type="radio"]');if(radio)radio.addEventListener('change',()=>{document.querySelectorAll('[data-course-option]').forEach(item=>item.classList.toggle('selected',item.querySelector('input').checked));});}
+
 const initial=document.querySelector('[data-course-option] input:checked');if(initial)initial.dispatchEvent(new Event('change'));
 document.querySelectorAll('[data-print-certificate]').forEach(button=>button.addEventListener('click',()=>window.print()));

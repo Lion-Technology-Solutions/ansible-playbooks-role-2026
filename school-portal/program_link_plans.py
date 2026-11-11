@@ -4,6 +4,7 @@ import calendar
 from datetime import date,timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 from flask import abort,flash,g,redirect,render_template,request,session,url_for,Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -11,10 +12,10 @@ from werkzeug.utils import secure_filename
 from file_storage import validate_image
 
 PLAN_URL='https://flutterwave.com/pay/liontechpaymentplan'
-DEFAULT_STAGES=[{'label':'Enrollment payment — unlocks access','amount':'10.00','timing':'Before your first class'}, {'label':'Balance of first payment','amount':'9.99','timing':'Seven days after your first class'}, {'label':'Second payment','amount':'19.99','timing':'One calendar month after the first-payment balance'}, {'label':'Final payment','amount':'19.99','timing':'Two calendar months after the first-payment balance'}]
+DEFAULT_STAGES=[{'label':'Enrollment payment — unlocks access','amount':'10.00','timing':'Due immediately on enrollment'}, {'label':'Balance of first payment','amount':'9.99','timing':'Seven days after your first class'}, {'label':'Second payment','amount':'19.99','timing':'One calendar month after the first-payment balance'}, {'label':'Final payment','amount':'19.99','timing':'Two calendar months after the first-payment balance'}]
 
 
-def dated_stages(stages,start):
+def dated_stages(stages,start,enrolled_on=None):
     """Calendar dates stay anchored to the first class, never to payment/review time."""
     dates=[None]*4
     if start:
@@ -23,7 +24,22 @@ def dated_stages(stages,start):
         for offset in (1,2):
             month=balance.month-1+offset;year=balance.year+month//12;month=month%12+1
             dates.append(date(year,month,min(balance.day,calendar.monthrange(year,month)[1])))
-    return [dict(stage,timing=DEFAULT_STAGES[index]['timing'],due=dates[index].isoformat() if dates[index] else None) for index,stage in enumerate(stages)]
+    if enrolled_on:dates[0]=enrolled_on
+    result=[dict(stage,timing=(stage['timing'] if index==0 and enrolled_on is None else DEFAULT_STAGES[index]['timing']),due=dates[index].isoformat() if dates[index] else None) for index,stage in enumerate(stages)]
+    if enrolled_on:result[0]['first_class']=start.isoformat() if start else None
+    return result
+
+
+def snapshot_dates(stages,cohort_start):
+    # Version-one plans used the initial due date as their class-date anchor.
+    if 'first_class' in stages[0]:
+        start=date.fromisoformat(stages[0]['first_class']) if stages[0].get('first_class') else cohort_start
+        enrolled_on=date.fromisoformat(stages[0]['due']) if stages[0].get('due') else None
+    else:
+        start=date.fromisoformat(stages[0]['due']) if stages[0].get('due') else cohort_start
+        enrolled_on=None
+    return dated_stages(stages,start,enrolled_on)
+
 
 
 def uses_default_stages(stages):
@@ -48,8 +64,7 @@ def seed_policy(connection,m):
     for row in rows:
         stages=row['stages']
         if not uses_default_stages(stages) or any(part.get('due') for part in stages[1:]):continue
-        start=date.fromisoformat(stages[0]['due']) if stages[0].get('due') else row['cohort_start']
-        connection.execute(Plan.__table__.update().where(Plan.enrollment_id==row['enrollment_id']).values(stages=dated_stages(stages,start)))
+        connection.execute(Plan.__table__.update().where(Plan.enrollment_id==row['enrollment_id']).values(stages=snapshot_dates(stages,row['cohort_start'])))
 
 
 def install(app,db,m,h):
@@ -72,13 +87,12 @@ def install(app,db,m,h):
         snapshot=existing(enrollment)
         if snapshot:
             if uses_default_stages(snapshot.stages) and not any(part.get('due') for part in snapshot.stages[1:]):
-                start=date.fromisoformat(snapshot.stages[0]['due']) if snapshot.stages[0].get('due') else (enrollment.cohort.start_date if enrollment.cohort else None)
-                updated=dated_stages(snapshot.stages,start)
+                updated=snapshot_dates(snapshot.stages,enrollment.cohort.start_date if enrollment.cohort else None)
                 if updated!=snapshot.stages:snapshot.stages=updated;db.session.commit()
             return snapshot
         if not eligible(enrollment):return None
         source=policy(enrollment.course)
-        stages=dated_stages(source.stages,enrollment.cohort.start_date if enrollment.cohort else None) if uses_default_stages(source.stages) else source.stages
+        stages=dated_stages(source.stages,enrollment.cohort.start_date if enrollment.cohort else None,m['aware'](enrollment.created_at).astimezone(ZoneInfo('America/Toronto')).date()) if uses_default_stages(source.stages) else source.stages
         snapshot=Plan(enrollment_id=enrollment.id,currency=source.currency,total=source.total,checkout_url=source.checkout_url,stages=stages)
         invoice=db.session.scalar(select(Invoice).where(Invoice.enrollment_id==enrollment.id))
         if not invoice:invoice=Invoice(enrollment_id=enrollment.id,amount_usd=Decimal(stages[0]['amount']));db.session.add(invoice)
@@ -95,7 +109,8 @@ def install(app,db,m,h):
             parts.append(part)
             if next_payment is None and part['remaining']>0:next_payment=dict(part,amount=part['remaining'])
         terms=SimpleNamespace(enrollment_id=enrollment.id,total=plan.total,currency=plan.currency,installments=len(plan.stages),checkout_url=plan.checkout_url,plan='fixed')
-        return dict(terms=terms,collected=paid,remaining=max(Decimal(0),plan.total-paid),next=next_payment,parts=parts)
+        anchor=plan.stages[0].get('first_class') if 'first_class' in plan.stages[0] else plan.stages[0].get('due')
+        return dict(terms=terms,collected=paid,remaining=max(Decimal(0),plan.total-paid),next=next_payment,parts=parts,starts_on=date.fromisoformat(anchor) if anchor else None)
     def owner(enrollment_id):
         enrollment=db.get_or_404(m['Enrollment'],enrollment_id)
         if enrollment.student_id!=g.student.id:abort(403)
@@ -176,7 +191,7 @@ def install(app,db,m,h):
         start=cohort.start_date if cohort and cohort.course_id==course_id else None
         source=db.session.get(Policy,course_id)
         if not source:return []
-        return [dict(part,due=date.fromisoformat(part['due']) if part.get('due') else None) for part in dated_stages(source.stages,start)]
+        return [dict(part,due=date.fromisoformat(part['due']) if part.get('due') else None,first_class=date.fromisoformat(part['first_class']) if part.get('first_class') else None) for part in dated_stages(source.stages,start,m['academy_today']())]
     @app.context_processor
     def link_plan_context():
         return dict(payment_plan_preview=preview,has_link_payment_programs=bool(db.session.scalar(select(Policy.course_id).where(Policy.enabled.is_(True)).limit(1))),program_payment_policy=policy,fixed_plan_for=existing,uses_link_plan=eligible,link_plan_billing=billing,link_plan_proofs=db.session.scalars(select(Proof).order_by(Proof.created_at.desc())).all() if session.get('admin') and request.endpoint=='admin' else [])

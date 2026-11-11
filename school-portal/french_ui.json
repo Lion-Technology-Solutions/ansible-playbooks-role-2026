@@ -281,5 +281,15 @@
   "Seven days after your first class": "Sept jours après votre premier cours",
   "One calendar month after the first-payment balance": "Un mois civil après le solde du premier paiement",
   "Two calendar months after the first-payment balance": "Deux mois civils après le solde du premier paiement",
-  "Your payment dates will appear when your first class is assigned.": "Vos échéances apparaîtront une fois votre premier cours attribué."
+  "Your payment dates will appear when your first class is assigned.": "Vos échéances apparaîtront une fois votre premier cours attribué.",
+  "Choose your preferred start date": "Choisissez votre date de début préférée",
+  "Preferred start date": "Date de début préférée",
+  "Start date month": "Mois de début",
+  "Previous month": "Mois précédent",
+  "Next month": "Mois suivant",
+  "Due immediately on enrollment": "À payer immédiatement lors de l’inscription",
+  "Enrollment payment — due immediately": "Paiement d’inscription — à payer immédiatement",
+  "Select an available date to continue.": "Sélectionnez une date disponible pour continuer.",
+  "Classes start every Saturday. Choose an available date through December 2027. Dates follow Toronto time.": "Les cours commencent chaque samedi. Choisissez une date disponible jusqu’en décembre 2027. Les dates suivent l’heure de Toronto.",
+  "Choose your preferred start date before continuing.": "Choisissez votre date de début préférée avant de continuer."
 }
