@@ -1,6 +1,7 @@
 """Snapshot payment plans for externally hosted checkout with audited receipt review."""
 import secrets
-from datetime import date
+import calendar
+from datetime import date,timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from flask import abort,flash,g,redirect,render_template,request,session,url_for,Response
@@ -10,17 +11,45 @@ from werkzeug.utils import secure_filename
 from file_storage import validate_image
 
 PLAN_URL='https://flutterwave.com/pay/liontechpaymentplan'
-DEFAULT_STAGES=[{'label':'Enrollment payment — unlocks access','amount':'10.00','timing':'Before your first class'}, {'label':'Balance of first payment','amount':'9.99','timing':'Due date to be confirmed'}, {'label':'Second payment','amount':'19.99','timing':'Due date to be confirmed'}, {'label':'Final payment','amount':'19.99','timing':'Due date to be confirmed'}]
+DEFAULT_STAGES=[{'label':'Enrollment payment — unlocks access','amount':'10.00','timing':'Before your first class'}, {'label':'Balance of first payment','amount':'9.99','timing':'Seven days after your first class'}, {'label':'Second payment','amount':'19.99','timing':'One calendar month after the first-payment balance'}, {'label':'Final payment','amount':'19.99','timing':'Two calendar months after the first-payment balance'}]
+
+
+def dated_stages(stages,start):
+    """Calendar dates stay anchored to the first class, never to payment/review time."""
+    dates=[None]*4
+    if start:
+        balance=start+timedelta(days=7)
+        dates=[start,balance]
+        for offset in (1,2):
+            month=balance.month-1+offset;year=balance.year+month//12;month=month%12+1
+            dates.append(date(year,month,min(balance.day,calendar.monthrange(year,month)[1])))
+    return [dict(stage,timing=DEFAULT_STAGES[index]['timing'],due=dates[index].isoformat() if dates[index] else None) for index,stage in enumerate(stages)]
+
+
+def uses_default_stages(stages):
+    return [part.get('amount') for part in stages]==[part['amount'] for part in DEFAULT_STAGES]
 
 
 def seed_policy(connection,m):
     Course,Policy,Price=(m[x] for x in ('Course','CoursePaymentPolicy','GlobalTuition'))
     course_id=connection.execute(select(Course.id).where(Course.slug=='data-analytics')).scalar()
-    if not course_id or connection.execute(select(Policy.course_id).where(Policy.course_id==course_id)).first():return
-    connection.execute(Policy.__table__.insert().values(course_id=course_id,currency='USD',total=Decimal('59.97'),checkout_url=PLAN_URL,stages=DEFAULT_STAGES,enabled=True))
-    values=dict(currency='USD',total=Decimal('59.97'),installments=4,full_url=PLAN_URL,installment_url=PLAN_URL)
-    table=Price.__table__
-    connection.execute(table.update().where(table.c.course_id==course_id).values(**values) if connection.execute(select(table.c.course_id).where(table.c.course_id==course_id)).first() else table.insert().values(course_id=course_id,**values))
+    if not course_id:return
+    policy=connection.execute(select(Policy.__table__).where(Policy.course_id==course_id)).mappings().first()
+    if not policy:
+        connection.execute(Policy.__table__.insert().values(course_id=course_id,currency='USD',total=Decimal('59.97'),checkout_url=PLAN_URL,stages=DEFAULT_STAGES,enabled=True))
+        values=dict(currency='USD',total=Decimal('59.97'),installments=4,full_url=PLAN_URL,installment_url=PLAN_URL)
+        table=Price.__table__
+        connection.execute(table.update().where(table.c.course_id==course_id).values(**values) if connection.execute(select(table.c.course_id).where(table.c.course_id==course_id)).first() else table.insert().values(course_id=course_id,**values))
+    elif uses_default_stages(policy['stages']):
+        connection.execute(Policy.__table__.update().where(Policy.course_id==course_id).values(stages=DEFAULT_STAGES))
+    # Fill only the previously unspecified deadlines; preserve amounts, receipts and custom dates.
+    Plan,Enrollment,Cohort=(m[x] for x in ('EnrollmentPaymentSchedule','Enrollment','Cohort'))
+    rows=connection.execute(select(Plan.__table__,Cohort.start_date.label('cohort_start')).join(Enrollment,Enrollment.id==Plan.enrollment_id).outerjoin(Cohort,Cohort.id==Enrollment.cohort_id).where(Enrollment.course_id==course_id)).mappings().all()
+    for row in rows:
+        stages=row['stages']
+        if not uses_default_stages(stages) or any(part.get('due') for part in stages[1:]):continue
+        start=date.fromisoformat(stages[0]['due']) if stages[0].get('due') else row['cohort_start']
+        connection.execute(Plan.__table__.update().where(Plan.enrollment_id==row['enrollment_id']).values(stages=dated_stages(stages,start)))
 
 
 def install(app,db,m,h):
@@ -41,17 +70,22 @@ def install(app,db,m,h):
         return True
     def ensure(enrollment):
         snapshot=existing(enrollment)
-        if snapshot:return snapshot
+        if snapshot:
+            if uses_default_stages(snapshot.stages) and not any(part.get('due') for part in snapshot.stages[1:]):
+                start=date.fromisoformat(snapshot.stages[0]['due']) if snapshot.stages[0].get('due') else (enrollment.cohort.start_date if enrollment.cohort else None)
+                updated=dated_stages(snapshot.stages,start)
+                if updated!=snapshot.stages:snapshot.stages=updated;db.session.commit()
+            return snapshot
         if not eligible(enrollment):return None
         source=policy(enrollment.course)
-        stages=[dict(part,due=enrollment.cohort.start_date.isoformat() if index==0 and enrollment.cohort else None) for index,part in enumerate(source.stages)]
+        stages=dated_stages(source.stages,enrollment.cohort.start_date if enrollment.cohort else None) if uses_default_stages(source.stages) else source.stages
         snapshot=Plan(enrollment_id=enrollment.id,currency=source.currency,total=source.total,checkout_url=source.checkout_url,stages=stages)
         invoice=db.session.scalar(select(Invoice).where(Invoice.enrollment_id==enrollment.id))
         if not invoice:invoice=Invoice(enrollment_id=enrollment.id,amount_usd=Decimal(stages[0]['amount']));db.session.add(invoice)
         else:invoice.amount_usd=Decimal(stages[0]['amount'])
         db.session.add(snapshot);db.session.commit();return snapshot
     def billing(enrollment):
-        plan=existing(enrollment)
+        plan=ensure(enrollment)
         if not plan:return None
         paid=sum(db.session.scalars(select(Entry.amount).where(Entry.enrollment_id==enrollment.id,Entry.currency==plan.currency)),Decimal(0))
         cumulative=Decimal(0);next_payment=None;parts=[]
@@ -136,7 +170,14 @@ def install(app,db,m,h):
             db.session.commit();flash('Payment recorded. Enrollment access reflects the verified payment and existing account restrictions.')
         except IntegrityError:db.session.rollback();abort(409,'That transaction has already been recorded.')
         return redirect(url_for('admin',view='payments'))
+    def preview(course_id):
+        chosen=session.get('application') or {}
+        cohort=db.session.get(m['Cohort'],chosen.get('cohort_id')) if chosen.get('cohort_id') else None
+        start=cohort.start_date if cohort and cohort.course_id==course_id else None
+        source=db.session.get(Policy,course_id)
+        if not source:return []
+        return [dict(part,due=date.fromisoformat(part['due']) if part.get('due') else None) for part in dated_stages(source.stages,start)]
     @app.context_processor
     def link_plan_context():
-        return dict(has_link_payment_programs=bool(db.session.scalar(select(Policy.course_id).where(Policy.enabled.is_(True)).limit(1))),program_payment_policy=policy,fixed_plan_for=existing,uses_link_plan=eligible,link_plan_billing=billing,link_plan_proofs=db.session.scalars(select(Proof).order_by(Proof.created_at.desc())).all() if session.get('admin') and request.endpoint=='admin' else [])
+        return dict(payment_plan_preview=preview,has_link_payment_programs=bool(db.session.scalar(select(Policy.course_id).where(Policy.enabled.is_(True)).limit(1))),program_payment_policy=policy,fixed_plan_for=existing,uses_link_plan=eligible,link_plan_billing=billing,link_plan_proofs=db.session.scalars(select(Proof).order_by(Proof.created_at.desc())).all() if session.get('admin') and request.endpoint=='admin' else [])
     return dict(policy=policy,existing=existing,eligible=eligible,ensure=ensure,billing=billing)

@@ -1,6 +1,6 @@
 """Transaction-bound account/payment outbox and authenticated daily reminders."""
 import base64,hmac,json,os,re,secrets
-from datetime import timedelta,date
+from datetime import timedelta
 from decimal import Decimal
 from urllib.parse import quote
 from urllib.error import HTTPError
@@ -237,15 +237,26 @@ def install(app,db,m,h):
                 cumulative+=part['amount']
                 if cumulative>paid:first_due=part['due'];break
             enqueue(student,'payment_due',key,dict(enrollment_id=enrollment.id,course=enrollment.course.name,due=first_due.isoformat(),amount=str(remaining)+' '+plan.currency));count+=1
+        for plan in db.session.scalars(select(m['EnrollmentPaymentSchedule'])).all():
+            enrollment=db.session.get(Enrollment,plan.enrollment_id);student=enrollment.student;control=db.session.get(Control,student.id)
+            tuition=db.session.get(m['TuitionControl'],enrollment.id)
+            if (control and not control.active) or enrollment.status=='rejected' or (enrollment.status=='revoked' and (not tuition or tuition.status!='overdue' or tuition.access_hold)) or (tuition and tuition.status=='completed' and tuition.source=='admin'):continue
+            today=now().astimezone(ZoneInfo('America/Toronto')).date()
+            state=app.extensions['program_link_plans']['billing'](enrollment)
+            due=[part for part in state['parts'] if part['due'] and part['due']<=today and part['remaining']>0]
+            if not due:continue
+            last=db.session.scalar(select(Event).where(Event.event_key.like('link-due:'+str(enrollment.id)+':%')).order_by(Event.created_at.desc()).limit(1))
+            if last and not any(part['due']==today for part in due) and aware(last.created_at)>now()-timedelta(days=7):continue
+            key='link-due:'+str(enrollment.id)+':'+today.isoformat()
+            if db.session.scalar(select(Event.id).where(Event.event_key==key)):continue
+            enqueue(student,'payment_due',key,dict(enrollment_id=enrollment.id,course=enrollment.course.name,due=due[0]['due'].isoformat(),amount=str(sum((part['remaining'] for part in due),Decimal(0)))+' '+plan.currency));count+=1
         for invoice in db.session.scalars(select(m['FeeInvoice']).where(m['FeeInvoice'].status=='pending')).all():
             enrollment=invoice.enrollment;student=enrollment.student;control=db.session.get(Control,student.id)
             tuition=db.session.get(m['TuitionControl'],enrollment.id)
             if (control and not control.active) or enrollment.status=='rejected' or (enrollment.status=='revoked' and (not tuition or tuition.status!='overdue' or tuition.access_hold)):continue
             pref=db.session.get(m['StudentPreference'],student.id);today=now().astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date();due=aware(invoice.created_at).astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date()
             fixed=db.session.get(m['EnrollmentPaymentSchedule'],enrollment.id)
-            if fixed:
-                if not fixed.stages[0].get('due'):continue
-                due=date.fromisoformat(fixed.stages[0]['due'])
+            if fixed:continue # The staged-plan reminder above includes the enrollment payment once.
             if today<due:continue
             last=db.session.scalar(select(Event).where(Event.event_key.like('fee-due:'+invoice.id+':%')).order_by(Event.created_at.desc()).limit(1))
             if last and aware(last.created_at)>now()-timedelta(days=7):continue

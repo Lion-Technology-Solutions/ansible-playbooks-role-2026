@@ -1,4 +1,5 @@
 import io
+from datetime import date,timedelta,datetime,timezone
 from decimal import Decimal
 import pytest
 from sqlalchemy import select
@@ -37,7 +38,8 @@ def test_exact_plan_is_published_and_no_extra_enrollment_fee(app):
     with app.app_context():
         plan=db.session.get(EnrollmentPaymentSchedule,eid)
         assert plan.total==Decimal('59.97') and [p['amount'] for p in plan.stages]==['10.00','9.99','19.99','19.99']
-        assert all(part['due'] is None for part in plan.stages[1:])
+        assert all(part['due'] for part in plan.stages)
+        assert date.fromisoformat(plan.stages[1]['due'])==date.fromisoformat(plan.stages[0]['due'])+timedelta(days=7)
         assert db.session.scalar(select(FeeInvoice)).amount_usd==Decimal('10.00')
         assert not db.session.get(BillingSelection,eid)
     page=app.test_client().get('/courses/data-analytics').data
@@ -63,7 +65,7 @@ def test_initial_payment_grants_access_and_full_plan_is_credited_once(app):
             state=app.extensions['program_link_plans']['billing'](enrollment)
             assert state['collected']==sum(map(Decimal,['10.00','9.99','19.99','19.99'][:index+1]))
             assert state['remaining']==Decimal('59.97')-state['collected']
-            if index==0:assert state['next']['amount']==Decimal('9.99') and state['next']['due'] is None
+            if index==0:assert state['next']['amount']==Decimal('9.99') and state['next']['due']==enrollment.cohort.start_date+timedelta(days=7)
     with app.app_context():
         assert len(db.session.scalars(select(PaymentEntry)).all())==4
         assert len(db.session.scalars(select(FeeLedger)).all())==1
@@ -110,7 +112,7 @@ def test_existing_paid_agreements_are_not_repriced(app):
     with app.app_context():assert db.session.get(BillingSelection,eid).total==Decimal('120')
 
 
-def test_deposit_is_not_double_counted_in_forecast_and_no_unspecified_due_revocation(app):
+def test_deposit_is_not_double_counted_in_forecast_and_access_current_before_due(app):
     from flask import template_rendered
     student,manager,eid=setup_plan(app);seen=[]
     def capture(sender,template,context,**extra):
@@ -132,3 +134,94 @@ def test_fixed_plan_cannot_start_competing_api_checkout(app):
     for path in ['/payments/'+iid+'/checkout','/payments/'+iid+'/flutterwave']:
         response=student.post(path,data={'csrf':csrf(student,'/portal')})
         assert response.status_code==302 and response.location.endswith('/payments/plans/'+str(eid))
+
+
+@pytest.mark.parametrize('start,expected',[
+    ('2027-01-14',['2027-01-14','2027-01-21','2027-02-21','2027-03-21']),
+    ('2027-01-24',['2027-01-24','2027-01-31','2027-02-28','2027-03-31']),
+    ('2028-01-24',['2028-01-24','2028-01-31','2028-02-29','2028-03-31']),
+    ('2026-12-25',['2026-12-25','2027-01-01','2027-02-01','2027-03-01']),
+])
+def test_calendar_schedule_uses_first_class_seven_days_then_calendar_months(start,expected):
+    from program_link_plans import dated_stages,DEFAULT_STAGES
+    assert [p['due'] for p in dated_stages(DEFAULT_STAGES,date.fromisoformat(start))]==expected
+
+
+def test_existing_link_plan_dates_backfill_once_without_repricing_or_drifting(app):
+    import app as module
+    from program_link_plans import seed_policy
+    student,manager,eid=setup_plan(app)
+    with app.app_context():
+        plan=db.session.get(EnrollmentPaymentSchedule,eid)
+        original=[dict(part,due='2027-01-14' if index==0 else None) for index,part in enumerate(plan.stages)]
+        plan.stages=original;db.session.commit()
+        with db.engine.begin() as connection:seed_policy(connection,vars(module))
+        db.session.expire_all();plan=db.session.get(EnrollmentPaymentSchedule,eid)
+        assert [p['due'] for p in plan.stages]==['2027-01-14','2027-01-21','2027-02-21','2027-03-21']
+        enrollment=db.session.get(Enrollment,eid);enrollment.cohort.start_date=date(2030,5,1);db.session.commit()
+        state=app.extensions['program_link_plans']['billing'](enrollment)
+        assert state['next']['due']==date(2027,1,14) and plan.total==Decimal('59.97')
+        # Explicit customized deadlines are retained by repeated startup migrations.
+        plan.stages=[dict(p,due='2027-01-25' if i==1 else p['due']) for i,p in enumerate(plan.stages)];db.session.commit()
+        with db.engine.begin() as connection:seed_policy(connection,vars(module))
+        db.session.expire_all();assert db.session.get(EnrollmentPaymentSchedule,eid).stages[1]['due']=='2027-01-25'
+    page=student.get('/payments/plans/'+str(eid)).data
+    assert b'January 14, 2027' in page and b'Due January 25, 2027' in page
+
+
+def test_each_student_has_individual_dates_and_signup_previews_selected_start(app):
+    from app import Cohort
+    student,manager,eid=setup_plan(app)
+    second=app.test_client();register(second,email='another@example.com')
+    with app.app_context():
+        enrollment=db.session.get(Enrollment,eid);cid=enrollment.course_id
+        from app import next_start_dates
+        other_cohort=db.session.scalar(select(Cohort).where(Cohort.course_id==cid,Cohort.start_date==next_start_dates()[1]));cohort_id=other_cohort.id
+        first_dates=list(db.session.get(EnrollmentPaymentSchedule,eid).stages)
+    request_enrollment(second,cid,cohort_id)
+    with app.app_context():
+        other=db.session.scalar(select(Enrollment).where(Enrollment.id!=eid));other_id=other.id
+    second.get('/payments/plans/'+str(other_id))
+    with app.app_context():
+        other_plan=db.session.get(EnrollmentPaymentSchedule,other_id)
+        assert other_plan.stages[0]['due']!=first_dates[0]['due']
+        expected=[date.fromisoformat(p['due']).strftime('%B %d, %Y').encode() for p in other_plan.stages]
+    visitor=app.test_client()
+    visitor.post('/apply/choose',data={'csrf':csrf(visitor,'/apply'),'course_id':cid,'cohort_id':cohort_id})
+    page=visitor.get('/register').data
+    assert all(d in page for d in expected)
+    # The dashboard uses the same individual next deadline, even before paying.
+    assert expected[0] in second.get('/payments/plans/'+str(other_id)).data
+
+
+def test_unknown_start_waits_for_assignment_and_then_gets_dates(app):
+    student,manager,eid=setup_plan(app)
+    with app.app_context():
+        enrollment=db.session.get(Enrollment,eid);enrollment.cohort=None
+        plan=db.session.get(EnrollmentPaymentSchedule,eid)
+        plan.stages=[dict(p,due=None) for p in plan.stages];db.session.commit()
+        assert all(part['due'] is None for part in app.extensions['program_link_plans']['billing'](enrollment)['parts'])
+        from app import Cohort
+        enrollment.cohort=db.session.scalar(select(Cohort).where(Cohort.course_id==enrollment.course_id));db.session.commit()
+        assert all(part['due'] for part in app.extensions['program_link_plans']['billing'](enrollment)['parts'])
+
+
+def test_due_reminders_and_access_use_staged_dates_and_credit_the_deposit(app):
+    from app import LifecycleEvent
+    from program_link_plans import dated_stages
+    student,manager,eid=setup_plan(app);submit(student,eid,'DATE-DEPOSIT');review(app,manager,eid)
+    with app.app_context():
+        today=datetime.now(timezone.utc).astimezone(__import__('zoneinfo').ZoneInfo('America/Toronto')).date()
+        plan=db.session.get(EnrollmentPaymentSchedule,eid)
+        plan.stages=dated_stages(plan.stages,today-timedelta(days=7));db.session.commit()
+        app.extensions['notifications']['due_reminders']()
+        event=db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.event_key.like('link-due:%')))
+        assert event.payload['amount']=='9.99 USD' and event.payload['due']==today.isoformat()
+        assert db.session.get(TuitionControl,eid).status=='current' # Due today, not yet overdue.
+        app.extensions['notifications']['due_reminders']()
+        assert len(db.session.scalars(select(LifecycleEvent).where(LifecycleEvent.event_key.like('link-due:%'))).all())==1
+        plan.stages=dated_stages(plan.stages,today-timedelta(days=8));db.session.commit()
+        assert app.extensions['student_management']['sweep']()==1
+        assert db.session.get(TuitionControl,eid).status=='overdue' and db.session.get(Enrollment,eid).status=='revoked'
+    submit(student,eid,'DATE-BALANCE');review(app,manager,eid)
+    with app.app_context():assert db.session.get(TuitionControl,eid).status=='current' and db.session.get(Enrollment,eid).status=='approved'

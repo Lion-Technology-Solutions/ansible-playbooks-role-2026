@@ -71,7 +71,8 @@ def install(app,db,m,h):
     def sweep():
         if db.engine.dialect.name=='postgresql':db.session.execute(text('SELECT pg_advisory_xact_lock(73592048)'))
         changed=0
-        for plan in db.session.scalars(select(m['BillingSelection'])).all():
+        plans=list(db.session.scalars(select(m['BillingSelection'])).all())+list(db.session.scalars(select(m['EnrollmentPaymentSchedule'])).all())
+        for plan in plans:
             enrollment=db.session.scalar(select(Enrollment).where(Enrollment.id==plan.enrollment_id).with_for_update())
             row=tuition(enrollment)
             if not active(enrollment.student) or enrollment.status=='rejected' or (row and (row.access_hold or (row.status=='completed' and row.source=='admin'))):continue
@@ -79,8 +80,14 @@ def install(app,db,m,h):
             if enrollment.payment_status!='verified':continue
             pref=db.session.get(m['StudentPreference'],enrollment.student_id)
             today=now().astimezone(ZoneInfo(pref.timezone if pref else 'America/Toronto')).date()
-            paid=sum((entry.amount for entry in db.session.scalars(select(m['PaymentEntry']).where(m['PaymentEntry'].enrollment_id==enrollment.id,m['PaymentEntry'].currency==plan.currency,~m['PaymentEntry'].id.in_(select(m['FeeLedger'].entry_id))))),Decimal(0))
-            past_due=sum((part['amount'] for part in installment_schedule(plan.total,plan.installments,plan.starts_on) if part['due']<today),Decimal(0))
+            if isinstance(plan,m['EnrollmentPaymentSchedule']):
+                today=now().astimezone(ZoneInfo('America/Toronto')).date()
+                state=app.extensions['program_link_plans']['billing'](enrollment)
+                paid=state['collected']
+                past_due=sum((part['amount'] for part in state['parts'] if part['due'] and part['due']<today),Decimal(0))
+            else:
+                paid=sum((entry.amount for entry in db.session.scalars(select(m['PaymentEntry']).where(m['PaymentEntry'].enrollment_id==enrollment.id,m['PaymentEntry'].currency==plan.currency,~m['PaymentEntry'].id.in_(select(m['FeeLedger'].entry_id))))),Decimal(0))
+                past_due=sum((part['amount'] for part in installment_schedule(plan.total,plan.installments,plan.starts_on) if part['due']<today),Decimal(0))
             new_status='completed' if paid>=plan.total else ('overdue' if paid<past_due else 'current')
             if not row or row.status!=new_status:
                 change(enrollment,new_status,'Automatic tuition-plan reconciliation based on recorded payments.',source='plan');changed+=1

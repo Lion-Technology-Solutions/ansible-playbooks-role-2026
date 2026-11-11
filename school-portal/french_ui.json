@@ -277,5 +277,9 @@
   "Go to live classes →": "Accéder aux cours en direct →",
   "Contact payment support": "Contacter l’assistance aux paiements",
   "Flutterwave transaction reference": "Référence de transaction Flutterwave",
-  "Payment proof received. Access changes only after an administrator verifies the payment.": "Justificatif reçu. L’accès ne change qu’après vérification du paiement par un administrateur."
+  "Payment proof received. Access changes only after an administrator verifies the payment.": "Justificatif reçu. L’accès ne change qu’après vérification du paiement par un administrateur.",
+  "Seven days after your first class": "Sept jours après votre premier cours",
+  "One calendar month after the first-payment balance": "Un mois civil après le solde du premier paiement",
+  "Two calendar months after the first-payment balance": "Deux mois civils après le solde du premier paiement",
+  "Your payment dates will appear when your first class is assigned.": "Vos échéances apparaîtront une fois votre premier cours attribué."
 }
