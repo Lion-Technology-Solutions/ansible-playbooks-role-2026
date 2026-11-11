@@ -1408,7 +1408,7 @@ def create_app(config=None):
         lesson=db.get_or_404(Lesson,lesson_id)
         if not lesson.published or aware(lesson.available_at)>now(): abort(404)
         if not enrollment_for(lesson.course_id): abort(403)
-        return render_template('lesson_page.html',lesson=lesson,preview=False,completed=bool(db.session.get(LessonCompletion,(g.student.id,lesson.id))))
+        return render_template('lesson_page.html',lesson=lesson,preview=False,lesson_progress=learning_progress(g.student.id,lesson.course_id),completed=bool(db.session.get(LessonCompletion,(g.student.id,lesson.id))))
 
     @app.get('/admin/lessons/<int:lesson_id>/preview')
     @admin_required
