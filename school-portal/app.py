@@ -736,6 +736,35 @@ class Lesson(db.Model):
     attachments = db.relationship('LessonFile', order_by='LessonFile.asset_id')
 
 
+class DevOpsUnit(db.Model):
+    """Stable catalogue identity, separate from private draft lesson content."""
+    __tablename__ = 'portal_devops_units'
+    course_id = db.Column(db.Integer, db.ForeignKey('portal_courses.id'), primary_key=True)
+    number = db.Column(db.Integer, primary_key=True)
+    lesson_id = db.Column(db.Integer, db.ForeignKey('portal_lessons.id'), unique=True, nullable=False)
+    lesson = db.relationship(Lesson)
+
+
+class LessonClass(db.Model):
+    __tablename__ = 'portal_lesson_classes'
+    class_id = db.Column(db.Integer, db.ForeignKey('portal_classes.id'), primary_key=True)
+    lesson_id = db.Column(db.Integer, db.ForeignKey('portal_lessons.id'), nullable=False)
+
+
+class ClassNoticeScope(db.Model):
+    __tablename__ = 'portal_class_notice_scopes'
+    notification_id = db.Column(db.Integer, db.ForeignKey('portal_notifications.id'), primary_key=True)
+    class_id = db.Column(db.Integer, db.ForeignKey('portal_classes.id'), nullable=False)
+
+
+class LessonActivity(db.Model):
+    __tablename__ = 'portal_lesson_activities'
+    id = db.Column(db.Integer, primary_key=True)
+    lesson_id = db.Column(db.Integer, db.ForeignKey('portal_lessons.id'), nullable=False)
+    assessment_id = db.Column(db.Integer, db.ForeignKey('portal_assessments.id'), unique=True)
+    recording_id = db.Column(db.Integer, db.ForeignKey('portal_recordings.id'), unique=True)
+
+
 class LessonFile(db.Model):
     __tablename__ = 'portal_lesson_files'
     lesson_id = db.Column(db.Integer, db.ForeignKey('portal_lessons.id'), primary_key=True)
@@ -896,7 +925,7 @@ def seed(connection):
     for course in connection.execute(select(table)).mappings():
         if not connection.execute(select(profile.c.course_id).where(profile.c.course_id == course['id'])).first():
             is_analytics = course['slug'] == 'data-analytics'
-            connection.execute(profile.insert().values(course_id=course['id'], duration='3 months' if is_analytics else '',
+            connection.execute(profile.insert().values(course_id=course['id'], duration='3 months' if is_analytics else ('6 months' if course['slug']=='devops' else ''),
                 schedule='', curriculum='\n'.join(course['skills'].split(' · ')), tuition={
                     'Cameroon': '10,000 FCFA per month · 30,000 FCFA total over 3 months. Start with 2,000 FCFA toward your first installment; pay the remaining 8,000 FCFA after your first class.',
                     'Nigeria': '₦19,900 per month for 3 months. Enrollment fee: ₦2,500.',
@@ -906,6 +935,7 @@ def seed(connection):
         if not connection.execute(select(publication.c.course_id).where(publication.c.course_id == course['id'])).first():
             connection.execute(publication.insert().values(course_id=course['id'], published=True,
                 published_at=now(), payment_links={country: value[0] for country, value in PAYMENTS.items()}))
+    connection.execute(profile.update().where(profile.c.course_id.in_(select(table.c.id).where(table.c.slug=='devops')),profile.c.duration=='').values(duration='6 months'))
     identities = StudentIdentity.__table__
     requests = AccountRequest.__table__
     # Account activation is independent of paid enrollment in any course.
@@ -1116,7 +1146,7 @@ def create_app(config=None):
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','devops_catalog','devops_workspace','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
 
     def student_required():
         def decorate(fn):
@@ -1313,8 +1343,10 @@ def create_app(config=None):
         db.session.add(PaymentEntry(enrollment_id=enrollment.id,reference=reference,amount=amount,currency=currency,received_at=received_at or now()))
 
     def notify(student_id, title, body='', available_at=None, recording_id=None):
-        db.session.add(Notification(student_id=student_id, title=title, body=body,
-            available_at=available_at or now(), recording_id=recording_id))
+        notice=Notification(student_id=student_id, title=title, body=body,
+            available_at=available_at or now(), recording_id=recording_id)
+        db.session.add(notice)
+        return notice
 
     def confirm_enrollment(enrollment):
         if enrollment.payment_status != 'verified':
@@ -1457,12 +1489,12 @@ def create_app(config=None):
         lesson=db.get_or_404(Lesson,lesson_id)
         if not lesson.published or aware(lesson.available_at)>now(): abort(404)
         if not enrollment_for(lesson.course_id): abort(403)
-        return render_template('lesson_page.html',lesson=lesson,preview=False,lesson_progress=learning_progress(g.student.id,lesson.course_id),completed=bool(db.session.get(LessonCompletion,(g.student.id,lesson.id))))
+        return render_template('lesson_page.html',lesson=lesson,preview=False,lesson_progress=learning_progress(g.student.id,lesson.course_id),completed=bool(db.session.get(LessonCompletion,(g.student.id,lesson.id))),**app.extensions['devops']['lesson_context'](lesson,False))
 
     @app.get('/admin/lessons/<int:lesson_id>/preview')
     @admin_required
     def lesson_preview(lesson_id):
-        return render_template('lesson_page.html',lesson=db.get_or_404(Lesson,lesson_id),preview=True)
+        return render_template('lesson_page.html',lesson=db.get_or_404(Lesson,lesson_id),preview=True,**app.extensions['devops']['lesson_context'](db.get_or_404(Lesson,lesson_id),True))
 
     @app.route('/brand/<slot>',methods=['GET','HEAD'])
     def brand_image(slot):
@@ -1700,6 +1732,7 @@ def create_app(config=None):
         allowed_recordings = select(Recording.id).where(Recording.course_id.in_(course_ids))
         notices = db.session.scalars(select(Notification).where(Notification.student_id == g.student.id, Notification.available_at <= now(),
             db.or_(Notification.recording_id.is_(None), Notification.recording_id.in_(allowed_recordings))).order_by(Notification.id.desc()).limit(20)).all()
+        notices = [n for n in notices if app.extensions['devops']['notice_visible'](n,g.student)]
         registered = set(db.session.scalars(select(ClassRegistration.class_id).where(ClassRegistration.student_id == g.student.id)))
         announcements = db.session.scalars(public_updates().order_by(PublicUpdate.publish_at.desc()).limit(12)).all()
         lessons=db.session.scalars(select(Lesson).where(Lesson.course_id.in_(course_ids),Lesson.published.is_(True),Lesson.available_at<=now()).order_by(Lesson.course_id,Lesson.position,Lesson.id)).all()
@@ -2008,6 +2041,7 @@ def create_app(config=None):
                         available_at=utc_field('available_at', True) or now())
                     db.session.add(recording)
                     db.session.flush()
+                    app.extensions['devops']['link_activity'](course.id,recording_id=recording.id)
                     for enrollment in db.session.scalars(select(Enrollment).where(Enrollment.course_id == course.id, Enrollment.status == 'approved', Enrollment.payment_status == 'verified')):
                         notify(enrollment.student_id, 'New class recording', recording.title, recording.available_at, recording.id)
                 elif action == 'assessment':
@@ -2015,8 +2049,10 @@ def create_app(config=None):
                     kind = field('kind', 12)
                     if kind not in ('assignment', 'quiz'):
                         raise ValueError('Choose assignment or quiz.')
-                    db.session.add(Assessment(course_id=course.id, title=field('title', 150), kind=kind,
-                        instructions=field('instructions', 10000), due_at=utc_field('due_at', True)))
+                    assessment=Assessment(course_id=course.id, title=field('title', 150), kind=kind,
+                        instructions=field('instructions', 10000), due_at=utc_field('due_at', True))
+                    db.session.add(assessment);db.session.flush()
+                    app.extensions['devops']['link_activity'](course.id,assessment_id=assessment.id)
                 elif action == 'grade':
                     submission = db.get_or_404(Submission, int(field('submission_id', 20)))
                     score = int(field('score', 3))
@@ -2037,6 +2073,8 @@ def create_app(config=None):
             except (ValueError, IntegrityError) as exc:
                 db.session.rollback()
                 flash(str(exc) if isinstance(exc, ValueError) else 'That record already exists. Check the details.')
+            if request.form.get('return_lesson_id'):
+                return redirect(url_for('devops_workspace',lesson_id=int(request.form['return_lesson_id'])))
             view=request.form.get('return_view','dashboard')
             return redirect(url_for('admin',view=view) if view in ('dashboard','students','enrollments','payments','programs','classes','materials','announcements','reports','settings') else url_for('admin'))
         view=request.args.get('view','dashboard')
@@ -2087,6 +2125,8 @@ def create_app(config=None):
     app.extensions['local_experience']=install_local_experience(app,db,globals())
     from local_payments import install as install_local_payments
     app.extensions['local_payments']=install_local_payments(app,db,globals(),dict(student_required=student_required,admin_required=admin_required,notify=notify))
+    from devops_portal import install as install_devops
+    install_devops(app,db,globals(),dict(admin_required=admin_required,student_required=student_required,enrollment_for=enrollment_for))
     return app
 
 

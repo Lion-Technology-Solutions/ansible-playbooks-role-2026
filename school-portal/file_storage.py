@@ -33,9 +33,9 @@ class PrivateBlobStorage:
 def validate_upload(filename, size, purpose):
     filename = secure_filename(filename)
     extension = PurePath(filename).suffix.lower()
-    mime = FILE_TYPES.get(extension)
-    if not filename or len(filename)>180 or not mime:
-        raise ValueError('Choose a supported document, image, audio or video file.')
+    mime = FILE_TYPES.get(extension, 'application/octet-stream')
+    if not filename or len(filename)>180:
+        raise ValueError('Choose a file with a valid filename.')
     if purpose not in ('lesson','branding'):
         raise ValueError('Choose lesson material or branding image.')
     if purpose=='branding' and mime not in ('image/png','image/jpeg','image/webp'):

@@ -8,3 +8,5 @@
   {% if unlocked %}<div class="actions course-access">{% if e.course.registration_url %}<a class="button blue" href="{{ url_for('course_registration',course_id=e.course_id) }}" target="_blank" rel="noopener">Register for live class ↗</a>{% endif %}{% if e.course.resources_url %}<a class="button outline" href="{{ url_for('course_materials',course_id=e.course_id) }}" target="_blank" rel="noopener">Access class materials ↗</a>{% endif %}</div>
   {% else %}<div class="access-locked"><strong>Class access locked</strong><p>Registration, joining links, materials, recordings and coursework unlock after payment verification and enrollment approval.</p></div>{% endif %}
 </article>
+
+{% if e is defined and e.course.slug=='devops' %}<a href="{{ devops_catalog_url }}">Explore all 48 DevOps lessons →</a>{% endif %}

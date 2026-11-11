@@ -304,6 +304,8 @@ def install(app,db,m,h):
     def class_detail(lesson):return db.session.get(Detail,lesson.id)
 
     def class_visible(lesson,student):
+        enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==student.id,Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified'))
+        if lesson.course.slug=='devops' and not enrollment:return False
         detail=class_detail(lesson)
         if not detail:return True
         if not detail.published:return False
@@ -366,7 +368,9 @@ def install(app,db,m,h):
         query=select(Enrollment).where(Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified')
         if detail.cohort_id:query=query.where(Enrollment.cohort_id==detail.cohort_id)
         for enrollment in db.session.scalars(query):
-            notify(enrollment.student_id,'Class schedule updated',lesson.title+' — '+app.extensions['local_experience']['time'](lesson.starts_at,enrollment.student)+' — open Live Classes to view the schedule and join securely.')
+            notice=notify(enrollment.student_id,'Class schedule updated',lesson.title+' — '+app.extensions['local_experience']['time'](lesson.starts_at,enrollment.student)+' — open Live Classes to view the schedule and join securely.')
+            db.session.flush()
+            db.session.add(m['ClassNoticeScope'](notification_id=notice.id,class_id=lesson.id))
             consent=db.session.get(M('ClassWhatsAppPreference'),enrollment.student_id)
             if consent and consent.enabled:app.extensions['notifications']['enqueue'](enrollment.student,'class_schedule',key=f'class-whatsapp:{lesson.id}:{detail.revision}:{enrollment.student_id}',channel='whatsapp',payload={'class_id':lesson.id,'revision':detail.revision})
             if not db.session.scalar(select(Delivery.id).where(Delivery.student_id==enrollment.student_id,Delivery.class_id==lesson.id,Delivery.revision==detail.revision)):
@@ -375,7 +379,8 @@ def install(app,db,m,h):
     @app.get('/admin/live-classes')
     @admin_required
     def schedule_admin():
-        return render_template('schedule_admin.html',admin_view='classes',courses=db.session.scalars(select(M('Course'))).all(),cohorts=db.session.scalars(select(Cohort).order_by(Cohort.start_date.desc())).all(),classes=db.session.scalars(select(Class).order_by(Class.starts_at.desc()).limit(50)).all(),deliveries=db.session.scalars(select(Delivery).order_by(Delivery.id.desc()).limit(30)).all(),zoom_ready=provider_ready('zoom'),email_ready=provider_ready('email'))
+        selected_lesson=db.session.get(m['Lesson'],request.args.get('lesson_id',type=int)) if request.args.get('lesson_id') else None
+        return render_template('schedule_admin.html',selected_lesson=selected_lesson,admin_view='classes',courses=db.session.scalars(select(M('Course'))).all(),cohorts=db.session.scalars(select(Cohort).order_by(Cohort.start_date.desc())).all(),classes=db.session.scalars(select(Class).order_by(Class.starts_at.desc()).limit(50)).all(),deliveries=db.session.scalars(select(Delivery).order_by(Delivery.id.desc()).limit(30)).all(),zoom_ready=provider_ready('zoom'),email_ready=provider_ready('email'))
 
     @app.post('/admin/live-classes/save')
     @admin_required
@@ -383,6 +388,8 @@ def install(app,db,m,h):
         try:
             app.extensions['assistant']['confirm_submission']('schedule_save')
             cid=int(field('course_id',20));db.get_or_404(M('Course'),cid)
+            linked_lesson=db.get_or_404(m['Lesson'],int(request.form['lesson_id'])) if request.form.get('lesson_id') else None
+            if linked_lesson and linked_lesson.course_id!=cid:raise ValueError('The lesson and class must belong to the same program.')
             cohort_id=int(request.form['cohort_id']) if request.form.get('cohort_id') else None
             if cohort_id and db.get_or_404(Cohort,cohort_id).course_id!=cid:raise ValueError('Choose a cohort belonging to this program.')
             duration=int(field('duration',4));minutes=int(field('join_minutes',3));zone=field('timezone',80)
@@ -418,6 +425,9 @@ def install(app,db,m,h):
             if not lesson.joining:lesson.joining=M('ClassJoinLink')(url=link)
             else:lesson.joining.url=link
             db.session.add(lesson);db.session.flush()
+            if linked_lesson:
+                association=db.session.get(m['LessonClass'],lesson.id) or m['LessonClass'](class_id=lesson.id)
+                association.lesson_id=linked_lesson.id;db.session.add(association)
             detail.class_id,detail.cohort_id,detail.duration,detail.join_minutes=lesson.id,cohort_id,duration,minutes
             detail.timezone,detail.instructor,detail.published=zone,instructor,published
             detail.revision=(detail.revision or 0)+1;db.session.add(detail);db.session.flush()
@@ -430,6 +440,7 @@ def install(app,db,m,h):
                     occurrence_link=m['valid_url'](result.get('join_url',''));meeting_id=str(result['id'])
                 occurrence=Class(course_id=cid,title=title,starts_at=starts_at,registration_url=registration);occurrence.joining=M('ClassJoinLink')(url=occurrence_link);db.session.add(occurrence);db.session.flush()
                 occurrence_detail=Detail(class_id=occurrence.id,cohort_id=cohort_id,duration=duration,join_minutes=minutes,timezone=zone,instructor=instructor,published=published,revision=1,meeting_id=meeting_id);db.session.add(occurrence_detail);db.session.flush();queue_class(occurrence,occurrence_detail)
+                if linked_lesson:db.session.add(m['LessonClass'](class_id=occurrence.id,lesson_id=linked_lesson.id))
             db.session.commit();delivered=app.extensions['integrations']['dispatch'](class_id=lesson.id)
             for occurrence in db.session.scalars(select(Class).where(Class.course_id==cid,Class.title==title,Class.starts_at.in_(occurrences[1:]))):app.extensions['integrations']['dispatch'](class_id=occurrence.id)
             flash('Class saved. Published schedule updates are in the portal. Email and calendar delivery was attempted directly for eligible students.' if delivered else 'Class saved, but some email or calendar deliveries failed. Review the delivery activity and retry outstanding updates.')
@@ -437,7 +448,7 @@ def install(app,db,m,h):
             db.session.rollback();flash(str(error) if isinstance(error,ValueError) else 'Could not save this schedule. Check the class and cohort details.')
         except Exception:
             db.session.rollback();flash('The Zoom provider did not confirm this update. The portal schedule was not changed. Check the meeting in Zoom before retrying.')
-        return redirect(url_for('schedule_admin'))
+        return redirect(url_for('devops_workspace',lesson_id=linked_lesson.id) if request.form.get('lesson_id') and 'linked_lesson' in locals() and linked_lesson else url_for('schedule_admin'))
 
     @app.post('/admin/live-classes/deliver')
     @admin_required

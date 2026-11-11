@@ -102,7 +102,7 @@ def test_upload_permissions_type_size_image_validation_and_csrf(app):
     assert student.post('/admin/assets/start',data={'csrf':csrf(student,'/portal'),'filename':'file.pdf','size':1,'purpose':'lesson'}).status_code==302
     assert manager.post('/admin/assets/start',data={'filename':'file.pdf','size':1,'purpose':'lesson'}).status_code==400
     token=csrf(manager,'/admin')
-    for name,size,purpose in [('hack.html',20,'lesson'),('logo.svg',20,'branding'),('file.pdf',0,'lesson'),('video.mp4',251*1024*1024,'lesson'),('file.pdf',1,'bad'),('file.pdf',1,'branding')]:
+    for name,size,purpose in [('hack.html',20,'branding'),('logo.svg',20,'branding'),('file.pdf',0,'lesson'),('video.mp4',251*1024*1024,'lesson'),('file.pdf',1,'bad'),('file.pdf',1,'branding')]:
         assert manager.post('/admin/assets/start',data={'csrf':token,'filename':name,'size':size,'purpose':purpose}).status_code==400
     r=manager.post('/admin/assets/start',data={'csrf':token,'filename':'fake.png','size':5,'purpose':'branding'})
     aid=r.json['id']

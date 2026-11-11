@@ -160,6 +160,8 @@ def install(app,db,m,h):
             p=course.profile;price=db.session.get(M('GlobalTuition'),course.id)
             data=dict(id=course.id,name=course.name,description=course.description[:3000],skills=course.skills,duration=p.duration if p else '',schedule=p.schedule if p else '',curriculum=p.curriculum[:10000] if p else '',tuition_usd=str(price.total) if price else None,tuition_details=p.tuition if p else {},published=course.publication.published)
             if not is_admin:
+                eligible=db.session.scalar(select(Enrollment.id).where(Enrollment.student_id==g.student.id,Enrollment.course_id==course.id,Enrollment.status=='approved',Enrollment.payment_status=='verified'))
+                if course.slug=='devops' and not eligible:data['schedule']='Available after verified payment and confirmed enrollment.'
                 localizer=app.extensions['local_experience'];data.pop('tuition_usd',None);data['tuition']=localizer['money'](price.total,price.currency) if price else 'Contact support';data['tuition_details']={};data['description']=localizer['text'](data['description']);result['fee_policy']='Enrollment and tuition prices are in the visitor’s local currency. Use the selected program payment schedule, including any enrollment payment credited toward tuition. Contact support if a current quote is unavailable.'
             result['programs'].append(data)
         result['cohorts']=[dict(id=c.id,course_id=c.course_id,date=c.start_date.isoformat(),label=c.label) for c in db.session.scalars(select(Cohort).where(Cohort.course_id.in_(ids),Cohort.start_date>=now().date()).order_by(Cohort.start_date).limit(100))]
@@ -167,7 +169,7 @@ def install(app,db,m,h):
         result['classes']=[]
         for lesson in classes:
             detail=db.session.get(Detail,lesson.id)
-            if not is_admin and detail and not detail.published:continue
+            if not is_admin and not app.extensions['global_experience']['class_visible'](lesson,g.student):continue
             if not is_admin and detail and detail.cohort_id:
                 enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==g.student.id,Enrollment.course_id==lesson.course_id,Enrollment.cohort_id==detail.cohort_id))
                 if not enrollment:continue
