@@ -10,5 +10,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r school-portal/requirements.txt pytest==8.4.2
+      - name: Install deployment dependencies
+        run: |
+          python - <<'PYTHON'
+          import subprocess, sys, tomllib
+          from pathlib import Path
+          manifest = tomllib.loads(Path('school-portal/pyproject.toml').read_text())
+          subprocess.check_call([sys.executable, '-m', 'pip', 'install', *manifest['project']['dependencies'], 'pytest==8.4.2'])
+          PYTHON
       - run: pytest school-portal/tests -q
