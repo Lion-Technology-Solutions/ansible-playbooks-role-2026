@@ -1,1 +1,18 @@
-{% if local_quote and local_quote.proof_id %}<p class="notice">Your payment receipt is awaiting verification. Please wait for the review before making another payment.</p>{% elif local_quote %}<p class="notice">Your secure quote: <strong>{{ local_quote_label(local_quote) }}</strong>. Checkout must use this same currency and amount.</p>{% for provider,label in [('stripe','Pay by card with Stripe'),('flutterwave','Pay with Flutterwave')] %}{% if local_provider_ready(provider,local_quote) %}{% if local_provider_test(provider) %}<p class="notice">Test checkout: test transactions do not activate class access.</p>{% endif %}<form method="post" action="{{ url_for('local_checkout',quote_id=local_quote.id,provider=provider) }}">{{ token() }}<button class="button blue full">{{ label }} →</button></form>{% endif %}{% endfor %}<p>If secure checkout is unavailable in your currency, contact support to arrange a confirmed local payment. No other currency will be substituted.</p>{% else %}<p class="notice">Local payment is temporarily unavailable. Confirm your country above, retry shortly, or contact support. No payment has been requested.</p>{% endif %}
+{% set attempt=local_payment_attempt(local_quote) %}
+{% if legacy_payment_pending(e) %}<div class="pay-message" role="status"><strong>Earlier checkout awaiting verification</strong><p>Contact support to confirm its status before paying again.</p></div>
+{% elif local_quote and (local_quote.proof_id or local_quote.manual_id) %}
+<div class="pay-message" role="status"><strong>Payment review in progress</strong><p>Your earlier receipt is awaiting verification. Please wait before making another payment.</p></div>
+{% elif attempt and attempt.paid %}
+<div class="pay-message" role="status"><strong>{{ 'Test payment received' if attempt.test_mode else 'Payment received · review in progress' }}</strong><p>{{ 'Test payments do not activate enrollment.' if attempt.test_mode else 'Your payment is saved. Support will reconcile it before enrollment access changes. Do not pay again.' }}</p></div>
+{% elif local_quote and local_quote_expired(local_quote) %}
+<div class="pay-message" role="status"><strong>Checkout needs review</strong><p>An earlier checkout has passed its quote window. Contact support to verify its status before making another payment.</p></div>
+{% elif local_quote and payment_provider and local_provider_ready(payment_provider,local_quote) and (not attempt or attempt.provider==payment_provider) %}
+{% if attempt and not attempt.checkout_url %}<div class="pay-message" role="status"><strong>Checking your previous attempt</strong><p>Contact support to confirm whether checkout was created. Do not start another payment.</p></div>
+{% else %}
+{% if local_provider_test(payment_provider) %}<p class="pay-message">Test checkout · Test transactions do not activate class access.</p>{% endif %}
+<form method="post" action="{{ url_for('local_checkout',quote_id=local_quote.id,provider=payment_provider) }}">{{ token() }}<button class="button blue full">{{ 'Resume' if attempt else 'Continue to' }} {{ payment_provider|title }} <span aria-hidden="true">→</span></button></form>
+<p class="pay-caption">Review and confirm {{ local_quote_label(local_quote) }} on {{ payment_provider|title }}’s secure checkout. Your quote is valid for 30 minutes.</p>
+{% endif %}
+{% else %}
+<div class="pay-message" role="status"><strong>{{ 'Confirm your country to continue' if not payment_provider else 'Checkout temporarily unavailable' }}</strong><p>{{ 'Choose your country above to see your local price and payment provider.' if not payment_provider else 'We cannot currently offer secure checkout in your local currency. Please contact payment support. No payment has been confirmed.' }}</p></div>
+{% endif %}

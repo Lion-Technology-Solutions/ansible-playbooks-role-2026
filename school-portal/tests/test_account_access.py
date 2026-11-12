@@ -1,3 +1,4 @@
+from test_portal import historical_payment
 from datetime import timedelta
 from urllib.parse import parse_qs,urlsplit
 from sqlalchemy import select
@@ -58,7 +59,7 @@ def test_active_accounts_show_courses_payments_and_announcements_but_hide_schedu
 
 def test_receipt_does_not_unlock_and_admin_combined_approval_does(app):
     student,manager,course,eid,lesson,rid=setup_pending(app)
-    post(student,f'/enrollment/{eid}/payment',reference='PAYMENT-TO-VERIFY')
+    historical_payment(student,eid,'PAYMENT-TO-VERIFY')
     assert_locked(student,course,lesson,rid)
     assert b'Verify the enrollment payment' in post(manager,'/admin',action='approve',enrollment_id=eid).data
     assert student.post('/admin',data={'csrf':csrf(student,'/portal'),'action':'verify_and_approve','enrollment_id':eid}).status_code==302
@@ -87,7 +88,7 @@ def test_approval_button_and_no_reference_guard(app):
     assert b'must submit a payment reference' in page.data
     with app.app_context():
         assert db.session.get(Enrollment,eid).payment_status=='unpaid'
-    post(student,f'/enrollment/{eid}/payment',reference='VERIFY-SEPARATELY')
+    historical_payment(student,eid,'VERIFY-SEPARATELY')
     assert b'Verify payment &amp; approve enrollment' in manager.get('/admin?view=enrollments').data
     post(manager,'/admin',action='verify_payment',enrollment_id=eid)
     assert b'class="button blue">Approve enrollment' in manager.get('/admin?view=enrollments').data
@@ -98,7 +99,7 @@ def test_approval_button_and_no_reference_guard(app):
 
 def test_revocation_locks_course_and_schedule_but_keeps_account(app):
     student,manager,course,eid,lesson,rid=setup_pending(app)
-    post(student,f'/enrollment/{eid}/payment',reference='PAY-THEN-REVOKE')
+    historical_payment(student,eid,'PAY-THEN-REVOKE')
     post(manager,'/admin',action='verify_and_approve',enrollment_id=eid)
     assert b'Paid course recording' in student.get('/portal').data
     post(manager,'/admin',action='reject',enrollment_id=eid)
@@ -112,7 +113,7 @@ def test_revocation_locks_course_and_schedule_but_keeps_account(app):
 
 def test_each_course_has_its_own_access_gate(app):
     student,manager,course,eid,lesson,rid=setup_pending(app)
-    post(student,f'/enrollment/{eid}/payment',reference='ONE-COURSE-ONLY')
+    historical_payment(student,eid,'ONE-COURSE-ONLY')
     post(manager,'/admin',action='verify_and_approve',enrollment_id=eid)
     with app.app_context():
         second=db.session.scalar(select(Course).where(Course.slug=='devops'))
@@ -157,7 +158,7 @@ def test_class_join_links_validate_and_unconfigured_links_do_not_leak_registrati
     with app.app_context():
         assert db.session.get(ClassSession,lesson).registration_url=='https://zoom.us/register/private-class'
     post(manager,'/admin',action='class_links',class_id=lesson,registration_url='https://zoom.us/register/private-class',join_url='')
-    post(student,f'/enrollment/{eid}/payment',reference='NO-JOIN-YET')
+    historical_payment(student,eid,'NO-JOIN-YET')
     post(manager,'/admin',action='verify_and_approve',enrollment_id=eid)
     assert student.get(f'/class/{lesson}/join').location.endswith('/portal#classes')
     assert b'Join class' not in student.get('/portal').data

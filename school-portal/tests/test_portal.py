@@ -42,12 +42,20 @@ def request_enrollment(client, course, cohort=None):
     return post(client, '/enrollments', course_id=course, **({'cohort_id':cohort} if cohort else {}))
 
 
+def historical_payment(client,enrollment_id,reference):
+    """Fixture for pre-provider-only submissions still awaiting reconciliation."""
+    with client.application.app_context():
+        e=db.session.get(Enrollment,enrollment_id);e.payment_status='submitted';e.payment_reference=reference;db.session.commit()
+
+
 def approve(app, student_client, admin_client, course, cohort=None):
     request_enrollment(student_client, course, cohort)
     with app.app_context():
         e = db.session.scalar(select(Enrollment).where(Enrollment.course_id == course))
         enrollment_id = e.id
-    post(student_client, f'/enrollment/{enrollment_id}/payment', reference='TEST-REF-1234', note='Test receipt')
+    # Existing historical payment awaiting administrator verification.
+    with app.app_context():
+        e=db.session.get(Enrollment,enrollment_id);e.payment_status='submitted';e.payment_reference='TEST-REF-1234';db.session.commit()
     post(admin_client, '/admin', action='verify_payment', enrollment_id=enrollment_id)
     post(admin_client, '/admin', action='approve', enrollment_id=enrollment_id)
     return enrollment_id
@@ -105,7 +113,7 @@ def test_payment_must_be_verified_before_approval(app):
     result=post(manager,'/admin',action='approve',enrollment_id=enrollment_id)
     assert b'Verify the enrollment payment' in result.data
     assert b'must submit a payment reference' in post(manager,'/admin',action='verify_payment',enrollment_id=enrollment_id).data
-    post(student,f'/enrollment/{enrollment_id}/payment',reference='MY-REAL-TRANSACTION')
+    historical_payment(student,enrollment_id,'MY-REAL-TRANSACTION')
     assert student.get('/portal').status_code == 200
     assert student.get(f'/course/{course}/materials').status_code == 403
     post(manager,'/admin',action='verify_payment',enrollment_id=enrollment_id)
@@ -226,9 +234,10 @@ def test_invalid_and_duplicate_references_and_cross_course_dates(app):
     request_enrollment(two,course,cohort)
     with app.app_context():
         ids=list(db.session.scalars(select(Enrollment.id).order_by(Enrollment.id)))
-    post(one,f'/enrollment/{ids[0]}/payment',reference='REUSED-REF')
+    assert post(one,f'/enrollment/{ids[0]}/payment',reference='REUSED-REF').status_code==410
     page=post(two,f'/enrollment/{ids[1]}/payment',reference='REUSED-REF')
-    assert b'already been submitted' in page.data
+    assert page.status_code==410
+    with app.app_context():assert all(e.payment_status=='unpaid' for e in db.session.scalars(select(Enrollment)))
 
 
 def test_student_numbers_for_new_existing_and_legacy_accounts(app):

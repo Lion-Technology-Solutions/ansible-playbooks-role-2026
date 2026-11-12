@@ -1188,7 +1188,7 @@ def create_app(config=None):
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
         response.headers.setdefault('Referrer-Policy','strict-origin-when-cross-origin')
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self' https://checkout.stripe.com https://accounts.google.com https://login.microsoftonline.com https://www.facebook.com; frame-ancestors 'none'; base-uri 'self'"
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self' https://checkout.stripe.com https://checkout.flutterwave.com https://checkout.flutterwave.com.ng https://accounts.google.com https://login.microsoftonline.com https://www.facebook.com; frame-ancestors 'none'; base-uri 'self'"
         return response
 
     @app.context_processor
@@ -2196,6 +2196,8 @@ def create_app(config=None):
     app.extensions['portal_languages']=install_languages(app,db,globals())
     from local_experience import install as install_local_experience
     app.extensions['local_experience']=install_local_experience(app,db,globals())
+    from payment_routing import install as install_payment_routing
+    install_payment_routing(app)
     from local_payments import install as install_local_payments
     app.extensions['local_payments']=install_local_payments(app,db,globals(),dict(student_required=student_required,admin_required=admin_required,notify=notify))
     from devops_portal import install as install_devops

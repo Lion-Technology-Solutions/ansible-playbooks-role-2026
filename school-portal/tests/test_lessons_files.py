@@ -1,3 +1,4 @@
+from test_portal import historical_payment
 import hashlib
 import io
 from datetime import timedelta
@@ -57,7 +58,7 @@ def test_lesson_documents_only_unlock_after_course_payment(app):
     assert app.test_client().get(f'/files/{aid}').location.endswith('/student/login')
     assert b'Working with data' not in student.get('/portal').data
     with app.app_context(): eid=db.session.scalar(select(Enrollment.id))
-    post(student,f'/enrollment/{eid}/payment',reference='FILE-ACCESS-PAID')
+    historical_payment(student,eid,'FILE-ACCESS-PAID')
     post(manager,'/admin',action='verify_and_approve',enrollment_id=eid)
     assert b'Working with data' in student.get('/portal').data
     assert student.get(f'/lessons/{lid}').status_code==200

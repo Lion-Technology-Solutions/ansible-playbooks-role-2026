@@ -81,10 +81,10 @@ def test_quote_and_receipt_are_bound_to_owner_currency_and_exact_payment(app):
         number=quote.enrollment.student.student_number
     assert b'USD' not in page.data and b'flutterwave.com/pay/' not in page.data
     def receipt(amount):return client.post('/payments/plans/'+str(eid),data={'csrf':csrf(client,'/portal'),'local_quote_id':qid,'local_amount':amount,'student_number':number,'reference':'LOCAL-RECEIPT','receipt':(io.BytesIO(b'%PDF-1.7\ntest'),'receipt.pdf')},follow_redirects=True)
-    assert b'must match' in receipt('10').data
-    assert b'Payment proof received' in receipt('16000').data
+    assert receipt('10').status_code==410
+    assert receipt('16000').status_code==410
     with app.app_context():
-        quote=db.session.get(LocalPaymentQuote,qid);assert quote.proof_id and not quote.credited
+        quote=db.session.get(LocalPaymentQuote,qid);assert not quote.proof_id and not quote.credited
         assert db.session.get(Enrollment,eid).status!='approved'
 
 
@@ -99,6 +99,8 @@ def test_weekly_occurrences_preserve_wall_clock_across_dst():
 
 def test_secure_stripe_uses_server_quote_and_verified_return_is_idempotent(app):
     client,eid,page=plan(app);calls=[]
+    client.post('/local-preferences',data={'csrf':csrf(client,'/portal'),'country':'Canada','next':'/portal'})
+    client.get('/payments/plans/'+str(eid))
     ready=app.extensions['integrations']['ready'];app.extensions['integrations']['ready']=lambda provider:provider=='stripe' or ready(provider)
     def stripe(path,payload=None,key=None):
         calls.append((path,payload))
@@ -106,16 +108,16 @@ def test_secure_stripe_uses_server_quote_and_verified_return_is_idempotent(app):
         if path=='country_specs/CA':return {'supported_payment_currencies':['ngn','cad']}
         if path=='checkout/sessions':return {'id':'cs_local_test','url':'https://checkout.stripe.com/c/pay/local'}
         if path=='checkout/sessions/cs_local_test':
-            with app.app_context():row=db.session.scalar(select(LocalPaymentQuote));number=row.enrollment.student.student_number;qid=row.id
-            return {'id':'cs_local_test','payment_status':'paid','currency':'ngn','amount_total':1600000,'client_reference_id':number,'metadata':{'local_quote':qid},'livemode':True}
+            with app.app_context():row=db.session.scalar(select(LocalPaymentQuote).where(LocalPaymentQuote.currency=='CAD'));number=row.enrollment.student.student_number;qid=row.id
+            return {'id':'cs_local_test','payment_status':'paid','currency':'cad','amount_total':1400,'client_reference_id':number,'metadata':{'local_quote':qid},'livemode':True}
         raise AssertionError(path)
     app.config['STRIPE_REQUEST']=stripe
-    with app.app_context():qid=db.session.scalar(select(LocalPaymentQuote.id))
+    with app.app_context():qid=db.session.scalar(select(LocalPaymentQuote.id).where(LocalPaymentQuote.currency=='CAD'))
     response=client.post('/payments/local/'+qid+'/stripe',data={'csrf':csrf(client,'/portal'),'amount':'.01','currency':'USD'})
     assert response.status_code==303
     payload=next(payload for path,payload in calls if path=='checkout/sessions')
     assert payload['adaptive_pricing[enabled]']=='false'
-    assert payload['line_items[0][price_data][unit_amount]']==1600000 and payload['line_items[0][price_data][currency]']=='ngn'
+    assert payload['line_items[0][price_data][unit_amount]']==1400 and payload['line_items[0][price_data][currency]']=='cad'
     with app.app_context():checkout_id=db.session.scalar(select(LocalCheckout.id))
     for _ in range(2):assert client.get('/payments/local/return/'+checkout_id).status_code==302
     with app.app_context():
@@ -137,10 +139,10 @@ def test_quote_expiry_currency_change_and_ownership_block_checkout(app):
     client,eid,page=plan(app)
     with app.app_context():
         row=db.session.scalar(select(LocalPaymentQuote));qid=row.id;row.expires_at=datetime.now(timezone.utc)-timedelta(seconds=1);db.session.commit()
-    response=client.post('/payments/local/'+qid+'/stripe',data={'csrf':csrf(client,'/portal')},follow_redirects=True)
+    response=client.post('/payments/local/'+qid+'/flutterwave',data={'csrf':csrf(client,'/portal')},follow_redirects=True)
     assert b'changed or expired' in response.data
     other=localized(app);register(other,email='another@example.com',country='Nigeria')
-    assert other.post('/payments/local/'+qid+'/stripe',data={'csrf':csrf(other,'/portal')}).status_code==403
+    assert other.post('/payments/local/'+qid+'/flutterwave',data={'csrf':csrf(other,'/portal')}).status_code==403
 
 
 def test_due_email_uses_recipient_currency_and_local_deadline(app,monkeypatch):
@@ -169,9 +171,9 @@ def test_expired_receipt_can_be_submitted_once_for_manual_review(app):
         row=db.session.scalar(select(LocalPaymentQuote));qid=row.id;number=row.enrollment.student.student_number
         row.expires_at=datetime.now(timezone.utc)-timedelta(minutes=1);db.session.commit()
     response=client.post('/payments/plans/'+str(eid),data={'csrf':csrf(client,'/portal'),'local_quote_id':qid,'local_amount':'16000','student_number':number,'reference':'AFTER-EXPIRY','receipt':(io.BytesIO(b'%PDF-1.7\ntest'),'receipt.pdf')},follow_redirects=True)
-    assert b'Payment proof received' in response.data
+    assert response.status_code==410
     with app.app_context():
-        assert db.session.get(LocalPaymentQuote,qid).proof_id
+        assert not db.session.get(LocalPaymentQuote,qid).proof_id
         assert not db.session.get(LocalPaymentQuote,qid).credited
 
 

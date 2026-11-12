@@ -1,72 +1,19 @@
-{# Provider readiness and billing remain authoritative. This chooser does not record payments. #}
-<section class="method-workspace" aria-label="Choose a payment method">
-  <div class="dash-card method-chooser">
-    <h2>Choose how to pay</h2>
-    <p class="muted">Select an option to see its next steps.</p>
-    {% set groups=[
-      ('Cards & online checkout',[
-        ('visa','Visa cards','Credit or debit card','card',''),
-        ('flutterwave','Flutterwave','Cards and local options at checkout','flutterwave',''),
-        ('stripe','Stripe','Pay by card on secure checkout','stripe','')]),
-      ('Mobile money',[
-        ('mtn','MTN Mobile Money','Pay from your MoMo wallet','manual','MTN Mobile Money'),
-        ('orange-money','Orange Money','Pay from your Orange wallet','manual','Orange Money'),
-        ('smartphone','Other mobile money','Ask about a wallet in your country','manual','Mobile money')]),
-      ('Transfers & local payments',[
-        ('interac','Interac e-Transfer','Request the academy recipient details','manual','Interac e-Transfer'),
-        ('landmark','Bank transfer / deposit','Get bank and reference instructions','manual','Bank deposit'),
-        ('banknote','Cash','Arrange payment with the academy','manual','Cash'),
-        ('arrow-right-left','Other local methods','Find an option for your country','manual','Other')])]
-    %}
-    {% for heading,methods in groups %}
-    <section class="method-group" aria-labelledby="methods-{{ loop.index }}">
-      <h3 id="methods-{{ loop.index }}">{{ heading }}</h3>
-      <div class="method-grid">
-      {% for key,label,description,kind,manual_method in methods %}
-        {% set stripe_enabled=local_quote and local_provider_ready('stripe',local_quote) %}
-        {% set flutterwave_enabled=local_quote and local_provider_ready('flutterwave',local_quote) %}
-        {% set online_enabled=(kind=='stripe' and stripe_enabled) or (kind=='flutterwave' and flutterwave_enabled) or (kind=='card' and (stripe_enabled or flutterwave_enabled)) %}
-        <details class="method-option" name="payment-method-choice" data-method="{{ key }}">
-          <summary>
-            <span class="method-logo"><img src="{{ url_for('static',filename='payment-brands/'+key+'.svg') }}" alt="" width="100" height="36"></span>
-            <strong>{{ label }}</strong>
-            <span class="method-description">{{ description }}</span>
-            <span class="method-status">{{ 'View secure checkout' if online_enabled else ('Request instructions' if kind=='manual' else 'Ask about availability') }} <span aria-hidden="true">→</span></span>
-          </summary>
-          <div class="method-instructions">
-          {% if online_enabled %}
-            {% if kind=='stripe' or (kind=='card' and stripe_enabled) %}
-              <p>Continue to Stripe’s secure checkout to enter your card details and confirm the charge.</p>
-              <a class="button blue full" href="#stripe-checkout">Continue with Stripe →</a>
-            {% else %}
-              <p>Continue to Flutterwave to see the payment options available for your country and confirm the exact amount.</p>
-              <a class="button blue full" href="#flutterwave-checkout">Continue with Flutterwave →</a>
-            {% endif %}
-          {% elif kind!='manual' %}
-            <p>{{ 'Online checkout is unavailable in your currency. Contact support to arrange a local method.' if payment_plan_mode else 'This checkout is not available for this invoice. Contact support for an alternative.' }}</p>
-            <a href="{{ support_url }}" target="_blank" rel="noopener">Contact payment support ↗</a>
-          {% else %}
-            <p>Request instructions for <strong>{{ label }}</strong> before paying. Student Support will confirm availability, recipient details, currency and the exact amount for your enrollment.</p>
-            {% if key=='banknote' %}<p>Obtain an official academy receipt with your student number, date and amount paid.</p>{% else %}<p>Include your student number as the payment reference and keep your transaction receipt.</p>{% endif %}
-            <a class="button outline full" href="{{ support_url }}" target="_blank" rel="noopener">Request payment instructions ↗</a>
-            {% if not payment_plan_mode %}<a class="method-proof-link" href="#manual-payment" data-payment-method="{{ manual_method }}">Already arranged and paid? Submit receipt →</a>{% else %}<p class="muted">Ask support how to record an alternative payment against this program’s installment plan.</p>{% endif %}
-          {% endif %}
-          </div>
-        </details>
-      {% endfor %}
-      </div>
-    </section>
-    {% endfor %}
-  </div>
-  <aside class="dash-card method-summary">
-    <p class="eyebrow">{{ 'YOUR NEXT PAYMENT' if payment_plan_mode else 'YOUR ENROLLMENT FEE' }}</p>
-    <p class="method-total">{% if payment_plan_mode %}{{ local_quote_label(local_quote) if local_quote else display_money(billing.next.amount if billing.next else 0,billing.terms.currency) }}{% else %}{{ local_quote_label(local_quote) if local_quote else display_money(invoice.amount_usd) }}{% endif %}</p>
-    <strong>{{ e.course.name }}</strong>
-    {% if payment_plan_mode %}<p>Included in your {{ display_money(plan.total,plan.currency) }} program total.</p>{% else %}<p>Enrollment fee only. Tuition is separate.</p>{% endif %}
-    <dl class="account-details"><dt>Student number</dt><dd>{{ g.student.student_number }}</dd><dt>Country of residence</dt><dd>{{ g.student.country }}</dd></dl>
-    <h3>Local methods, clear instructions</h3>
-    <ol><li>Select a payment method.</li><li>Confirm the amount and recipient.</li><li>Pay and save your receipt.</li><li>Submit proof where required.</li></ol>
-    <p class="muted">Availability depends on your country, program and connected provider. Selecting a method does not confirm payment.</p>
-    <a class="button outline full" href="{{ support_url }}" target="_blank" rel="noopener">Contact payment support ↗</a>
+{% set provider=payment_provider %}
+{% set payment_complete=(payment_plan_mode and not billing.next) or (not payment_plan_mode and invoice.status!='pending' and not local_quote) %}
+<section class="pay-grid" aria-label="Secure payment checkout">
+  <section class="dash-card pay-checkout">
+    <p class="eyebrow">SECURE CHECKOUT</p><h2>{{ 'Payment complete' if payment_complete else 'Complete your payment' }}</h2><p class="muted">{{ 'Your payment record is up to date.' if payment_complete else 'Review your details, then continue to secure checkout.' }}</p>
+    <ol class="pay-steps" aria-label="Payment progress"><li class="done">1 · Review</li><li{% if not payment_complete %} aria-current="step"{% endif %}>2 · Secure payment</li><li{% if payment_complete %} aria-current="step"{% endif %}>3 · Confirmation</li></ol>
+    <form class="pay-country" method="post" action="{{ url_for('local_preferences') }}">{{ token() }}<input type="hidden" name="next" value="{{ request.path }}"><label for="payment-country">Country of residence</label><div class="pay-country-control"><select name="country" id="payment-country" required><option value="">Choose your country</option>{% for country in countries if country!='Other' %}<option value="{{ country }}"{% if country==payment_country %} selected{% endif %}>{{ country }}</option>{% endfor %}</select><button class="button outline" type="submit">Update</button></div><p class="pay-caption">Your country determines your local currency and payment provider.</p></form>
+    {% if provider %}<div class="pay-provider" data-payment-provider="{{ provider }}"><div class="pay-provider-brand"><img src="{{ url_for('static',filename='payment-brands/'+provider+'.svg') }}" alt="" width="46" height="46"><div><h3>{{ provider|title }}</h3><p>{{ 'Secure checkout for Africa' if provider=='flutterwave' else 'Your secure payment provider' }}</p></div><span class="pay-assigned">Selected for you</span></div><p>{{ 'Available card and mobile money options appear inside Flutterwave checkout, based on your country and currency.' if provider=='flutterwave' else 'Available payment options appear inside Stripe’s secure checkout.' }}</p></div>{% endif %}
+    {% if payment_complete %}<div class="pay-message" role="status"><strong>Payment complete</strong><p>Your recorded balance is up to date. View your tuition schedule or continue to your student dashboard.</p><a class="button blue full" href="{{ url_for('portal') }}">Go to student dashboard →</a></div>{% else %}{% include 'local_checkout_controls.html' %}{% endif %}
+    <div class="pay-trust"><span aria-hidden="true">✓</span><div><strong>Secure payment details</strong><p>Your payment details are entered directly with your payment provider.</p></div></div>
+  </section>
+  <aside class="dash-card pay-order"><p class="eyebrow">PAYMENT SUMMARY</p><h2>{{ e.course.name }}</h2><p>{{ billing.next.label if payment_plan_mode and billing.next else ('Payment plan complete' if payment_plan_mode else 'Enrollment payment') }}</p>
+    <dl class="pay-details"><dt>Student number</dt><dd>{{ g.student.student_number }}</dd><dt>Country</dt><dd>{{ payment_country or 'Choose your country' }}</dd>{% if payment_plan_mode and billing.next %}<dt>Due by</dt><dd>{{ local_deadline(billing.next.due) }}</dd>{% endif %}<dt>Payment provider</dt><dd>{{ provider|title if provider else 'Confirm country' }}</dd></dl>
+    <div class="pay-total"><span>Amount due now</span><strong>{{ 'Paid' if payment_complete else (local_quote_label(local_quote) if local_quote else 'Local price unavailable') }}</strong></div>
+    <p class="pay-caption">{{ 'This payment counts toward your saved program total.' if payment_plan_mode else 'Enrollment fee only. Your tuition schedule is shown separately.' }}</p>
+    <div class="pay-after"><h3>What happens next?</h3><ol><li>Complete payment with {{ provider|title if provider else 'your assigned provider' }}.</li><li>We verify the payment and update your balance.</li><li>Qualifying payments unlock access when your enrollment is active and approved.</li></ol></div>
+    <a class="pay-support" href="{{ support_url }}" target="_blank" rel="noopener">Need help with your payment? ↗</a>
   </aside>
 </section>

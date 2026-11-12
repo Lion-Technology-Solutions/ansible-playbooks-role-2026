@@ -8,6 +8,7 @@ from flask import g,session,request,abort,redirect,url_for,flash
 from sqlalchemy import select
 from babel.numbers import get_currency_precision
 from providers import ORIGIN,stripe_request,api
+from payment_routing import provider_for_country
 from flutterwave_payments import CURRENCIES as FLW_CURRENCIES,checkout_url
 
 
@@ -35,6 +36,8 @@ def install(app,db,m,h):
             value=expected(enrollment);converted=locale['quote'](value['amount'],value['currency'],offset=value['offset'])
             if not converted['available'] or Decimal(converted['amount'])<=0:return None
             key=fingerprint(enrollment,value)
+            active=db.session.scalar(select(Quote).join(Checkout,Checkout.quote_id==Quote.id).where(Quote.enrollment_id==enrollment.id,Quote.credited.is_(False)).order_by(Quote.expires_at.desc()).limit(1))
+            if active:g.pinned_local_quote=active;return active
             pending=db.session.scalar(select(Quote).join(m['PlanPaymentProof'],m['PlanPaymentProof'].id==Quote.proof_id).where(Quote.enrollment_id==enrollment.id,Quote.fingerprint==key,m['PlanPaymentProof'].status=='submitted').limit(1))
             if pending:g.pinned_local_quote=pending;return pending
             row=db.session.scalar(select(Quote).where(Quote.enrollment_id==enrollment.id,Quote.fingerprint==key,Quote.currency==converted['currency'],Quote.expires_at>now(),Quote.credited.is_(False),Quote.proof_id.is_(None),Quote.manual_id.is_(None)).order_by(Quote.expires_at.desc()).limit(1))
@@ -54,7 +57,8 @@ def install(app,db,m,h):
         config=integrations['config']('flutterwave',include_disabled=True)
         return app.config.get('FLUTTERWAVE_HTTP',api)('https://api.flutterwave.com/v3/'+path,method,payload,{'Authorization':'Bearer '+config.get('FLW_SECRET_KEY','')})
     def supported(provider,row):
-        if row.proof_id or row.manual_id:return False
+        if row.proof_id or row.manual_id or row.credited or aware(row.expires_at)<=now():return False
+        if provider!=provider_for_country(locale['state']()['country']):return False
         cache=getattr(g,'local_provider_support',{});key=(provider,row.currency)
         if key not in cache:cache[key]=check_supported(provider,row);g.local_provider_support=cache
         return cache[key]
@@ -67,6 +71,10 @@ def install(app,db,m,h):
             currencies=stripe('country_specs/'+country.upper()).get('supported_payment_currencies',[])
             return row.currency.lower() in [str(c).lower() for c in currencies] and get_currency_precision(row.currency) in (0,2)
         except Exception:return False
+    def legacy_pending(enrollment):
+        invoice=db.session.scalar(select(m['FeeInvoice']).where(m['FeeInvoice'].enrollment_id==enrollment.id))
+        if not invoice:return False
+        return any(db.session.scalar(select(m[name].id).where(m[name].invoice_id==invoice.id,m[name].paid.is_(False)).limit(1)) for name in ('CardCheckout','FlutterwaveCheckout'))
     def minor(row):return int(row.amount*(100 if row.currency in ('ISK','UGX') else 10**get_currency_precision(row.currency)))
     def safe_stripe_url(value):
         parsed=urlsplit(value or '')
@@ -79,8 +87,13 @@ def install(app,db,m,h):
         destination=url_for('link_payment_plan',enrollment_id=enrollment.id) if row.stage>=0 and row.stage<100 else url_for('global_payment',enrollment_id=enrollment.id)
         if provider not in ('stripe','flutterwave'):abort(404)
         try:
+            # Serialize handoffs for the same enrollment before checking pending attempts.
+            db.session.scalar(select(m['Enrollment']).where(m['Enrollment'].id==enrollment.id).with_for_update())
+            if legacy_pending(enrollment):raise ValueError('An earlier checkout is awaiting verification. Contact support before paying again.')
+            outstanding=db.session.scalar(select(Checkout).join(Quote,Quote.id==Checkout.quote_id).where(Quote.enrollment_id==enrollment.id,Quote.credited.is_(False),Quote.id!=row.id).limit(1))
+            if outstanding:raise ValueError('An earlier payment is awaiting verification. Contact support before paying again.')
             validate(row.id,enrollment)
-            if not supported(provider,row):raise ValueError('This provider cannot currently charge in your local currency. Please use a confirmed local payment method or contact support.')
+            if not supported(provider,row):raise ValueError('This provider cannot currently charge in your local currency. Please contact support. No alternative provider will be substituted.')
             previous=db.session.scalar(select(Checkout).where(Checkout.quote_id==row.id,Checkout.provider==provider))
             if previous:
                 if previous.paid:raise ValueError('Payment is already received. Review its status before paying again.')
@@ -172,5 +185,5 @@ def install(app,db,m,h):
     def proof_quote(proof):return db.session.scalar(select(Quote).where(Quote.proof_id==proof.id))
     @app.context_processor
     def context():
-        return dict(local_checkout_reviews=db.session.scalars(select(Checkout).where(Checkout.paid.is_(True),Checkout.needs_review.is_(True)).order_by(Checkout.id)).all() if session.get('admin') else [],local_provider_test=lambda provider:integrations['config'](provider).get('STRIPE_SECRET_KEY' if provider=='stripe' else 'FLW_SECRET_KEY','').startswith('sk_test_' if provider=='stripe' else 'FLWSECK_TEST-'),local_payment_quote=current,local_provider_ready=supported,local_quote_label=lambda row:locale['format'](row.amount,row.currency) if row else 'Local payment unavailable',proof_quote=proof_quote)
+        return dict(local_checkout_reviews=db.session.scalars(select(Checkout).where(Checkout.paid.is_(True),Checkout.needs_review.is_(True)).order_by(Checkout.id)).all() if session.get('admin') else [],local_provider_test=lambda provider:integrations['config'](provider).get('STRIPE_SECRET_KEY' if provider=='stripe' else 'FLW_SECRET_KEY','').startswith('sk_test_' if provider=='stripe' else 'FLWSECK_TEST-'),legacy_payment_pending=legacy_pending,local_payment_history=lambda enrollment:db.session.scalars(select(Checkout).join(Quote,Quote.id==Checkout.quote_id).where(Quote.enrollment_id==enrollment.id).order_by(Quote.expires_at.desc())).all(),local_payment_quote=current,local_payment_attempt=lambda row:db.session.scalar(select(Checkout).where(Checkout.quote_id==row.id)) if row else None,local_quote_expired=lambda row:aware(row.expires_at)<=now(),local_provider_ready=supported,local_quote_label=lambda row:locale['format'](row.amount,row.currency) if row else 'Local payment unavailable',proof_quote=proof_quote)
     return dict(current=current,validate=validate,expected=expected,webhook=webhook,proof_quote=proof_quote,settle=settle)
