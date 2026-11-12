@@ -127,9 +127,10 @@ def install(app,db,m,h):
         if getattr(g,'staff',None):return redirect(url_for('staff_home'))
         if session.get('admin') or g.student:abort(400,'Sign out of your current account before using Staff sign in.')
         if request.method=='POST':
-            limit('staff-login:'+str(request.remote_addr),10,15);identity=request.form.get('identity','').strip().casefold();limit('staff-identity:'+identity[:254],20,15)
+            limit('staff-login:'+str(request.remote_addr),10,15);identity=request.form.get('identity','').strip().casefold()[:254];limit('staff-identity:'+identity[:254],20,15)
             member=db.session.scalar(select(Member).where(Member.email==identity))
-            if identity.upper().startswith('LTA-STF-') and identity[8:].isdigit():member=db.session.get(Member,int(identity[8:]))
+            number=identity[8:]
+            if identity.upper().startswith('LTA-STF-') and number.isascii() and number.isdigit() and len(number)<=10 and 0<int(number)<=2147483647:member=db.session.get(Member,int(number))
             if not member or not member.active or not member.verified_at or not check_password_hash(member.password_hash,request.form.get('password','')[:129]):
                 flash('Sign-in could not be completed. Check your staff credentials and account status.');return redirect(url_for('staff_login'))
             issue_code(member,'login','login');session['staff_verification_mode']='login';return redirect(url_for('staff_verify'))

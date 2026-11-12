@@ -71,6 +71,8 @@ def test_invite_resend_revoke_expiry_and_staff_login_require_verification(app):
     client=app.test_client();result=post(client,'/staff/sign-in',page='/staff/sign-in',identity='pending@example.test',password=PASSWORD)
     assert b'Staff sign in' in result.data
     assert client.get('/staff').status_code==302
+    for malformed in ('LTA-STF-²','LTA-STF-'+'9'*300):
+        assert post(client,'/staff/sign-in',page='/staff/sign-in',identity=malformed,password=PASSWORD).status_code==200
 
 
 def test_session_revoke_scope_separation_and_idle_expiry(app):
