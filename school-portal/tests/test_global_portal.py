@@ -30,11 +30,14 @@ def setup(app,country='Canada'):
 
 
 def manual(client,iid,number,**extra):
-    page=client.get('/payments/enrollment/1',follow_redirects=True).data
-    quote_id=re.search(rb'name="local_quote_id" value="([^"]+)"',page)[1].decode()
-    values={'csrf':csrf(client,'/portal'),'local_quote_id':quote_id,'student_number':number,'amount':'7.00','currency':'CAD','method':'Bank transfer','reference':'LOCAL-TRANSFER-1','note':'Payment proof','receipt':(io.BytesIO(b'%PDF-1.7\nReceipt'),'receipt.pdf')}
-    values.update(extra)
-    return client.post(f'/payments/{iid}/manual',data=values,follow_redirects=True)
+    """Seed a pre-migration receipt to exercise historical reconciliation."""
+    app=client.application
+    with app.app_context():
+        invoice=db.session.get(FeeInvoice,iid)
+        payment=ManualFeePayment(invoice_id=iid,reference=extra.get('reference','LOCAL-TRANSFER-1'),currency='CAD',amount=7,method=extra.get('method','Bank transfer'),note='Historical receipt',receipt_name='receipt.pdf',receipt_mime='application/pdf',receipt_path='historical/'+iid)
+        app.config['FILE_STORAGE'].put(payment.receipt_path,b'%PDF-1.7\nHistorical receipt')
+        db.session.add(payment);db.session.commit()
+    return client.get('/payments/enrollment/1',follow_redirects=True)
 
 
 def test_worldwide_residences_currency_rounding_and_cache(app):
@@ -83,9 +86,7 @@ def test_residence_changes_and_legacy_prices_preserved(app):
 
 def test_manual_receipt_number_is_owned_private_and_approval_books_only_fee(app):
     student,manager,course,cohort,eid,iid,number=setup(app)
-    assert b'does not match' in manual(student,iid,'LT-2027-999999').data
-    with app.app_context():assert not db.session.scalar(select(ManualFeePayment.id))
-    assert b'submitted for manual review' in manual(student,iid,number).data
+    assert manual(student,iid,number).status_code==200
     with app.app_context():
         payment=db.session.scalar(select(ManualFeePayment));pid=payment.id
         assert db.session.get(Enrollment,eid).payment_status=='unpaid'
@@ -94,7 +95,7 @@ def test_manual_receipt_number_is_owned_private_and_approval_books_only_fee(app)
     assert outsider.get(f'/payments/receipts/{pid}').status_code==403
     assert student.get(f'/payments/receipts/{pid}').data.startswith(b'%PDF')
     assert manager.get(f'/payments/receipts/{pid}').status_code==200
-    assert b'already submitted' in manual(student,iid,number).data
+    assert student.post(f'/payments/{iid}/manual',data={'csrf':csrf(student,'/portal')}).status_code==410
     assert manager.post(f'/admin/payments/{pid}/review',data={'csrf':csrf(manager,'/admin'),'decision':'approve'}).status_code==400
     for _ in range(2):post(manager,f'/admin/payments/{pid}/review',decision='approve',funds_verified='yes')
     with app.app_context():
@@ -119,10 +120,9 @@ def test_fee_does_not_reduce_full_tuition_balance(app):
 
 def test_receipt_validation_and_legacy_reference_needs_owned_number(app):
     student,manager,course,cohort,eid,iid,number=setup(app)
-    assert b'valid PDF' in manual(student,iid,number,receipt=(io.BytesIO(b'bad'),'fake.pdf')).data
-    assert b'Choose a PDF' in manual(student,iid,number,receipt=(io.BytesIO(b'<script>'),'attack.html')).data
+    assert student.post(f'/payments/{iid}/manual',data={'csrf':csrf(student,'/portal')}).status_code==410
     r=student.post(f'/enrollment/{eid}/payment',data={'csrf':csrf(student,'/portal'),'reference':'BYPASS'},follow_redirects=True)
-    assert b'does not match your signed-in account' in r.data
+    assert r.status_code==410
     r=student.post('/payments/verify-student',data={'csrf':csrf(student,'/portal'),'student_number':number});assert r.json['verified']
     assert not student.post('/payments/verify-student',data={'csrf':csrf(student,'/portal'),'student_number':'other'}).json['verified']
 
@@ -224,6 +224,9 @@ def test_local_card_presentment_and_safe_unsupported_precision(app,monkeypatch,c
         seen.append(payload);return {'id':'cs_local','url':'https://checkout.stripe.com/c/pay/local'}
     app.config['STRIPE_REQUEST']=stripe
     result=student.post(f'/payments/{iid}/checkout',data={'csrf':csrf(student,'/portal'),'student_number':number})
+    if country=='Uganda':
+        assert result.status_code==409 and not seen
+        return
     if currency=='KWD':
         assert result.status_code==302 and not seen
         return

@@ -1,3 +1,4 @@
+from test_portal import historical_payment
 from datetime import date, timedelta
 from decimal import Decimal
 import pytest
@@ -84,7 +85,7 @@ def test_completion_progress_and_certificate_gates(app):
         db.session.add_all(items);db.session.commit();ids=[item.id for item in items]
     assert b'First lesson' not in student.get('/portal').data
     assert post(student,f'/lessons/{ids[0]}/complete').status_code==403
-    post(student,f'/enrollment/{eid}/payment',reference='COMPLETE-PAID')
+    historical_payment(student,eid,'COMPLETE-PAID')
     post(manager,'/admin',action='verify_and_approve',enrollment_id=eid)
     assert b'completion of all released lessons' in post(manager,'/admin',action='issue_certificate',enrollment_id=eid).data
     for _ in range(2):post(student,f'/lessons/{ids[0]}/complete')

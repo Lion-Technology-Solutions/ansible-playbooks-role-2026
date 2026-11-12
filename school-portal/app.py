@@ -2196,6 +2196,8 @@ def create_app(config=None):
     app.extensions['portal_languages']=install_languages(app,db,globals())
     from local_experience import install as install_local_experience
     app.extensions['local_experience']=install_local_experience(app,db,globals())
+    from payment_routing import install as install_payment_routing
+    install_payment_routing(app)
     from local_payments import install as install_local_payments
     app.extensions['local_payments']=install_local_payments(app,db,globals(),dict(student_required=student_required,admin_required=admin_required,notify=notify))
     from devops_portal import install as install_devops

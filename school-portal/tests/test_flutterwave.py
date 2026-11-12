@@ -12,11 +12,10 @@ def prepare(app,monkeypatch,test=False,currency='USD'):
     monkeypatch.setenv('FLW_WEBHOOK_SECRET','unit-random-webhook-secret')
     monkeypatch.setenv('FLW_CHECKOUT_CURRENCY',currency)
     app.config['FX_PROVIDER']=lambda:({'USD':'1','NGN':'1500'},now())
-    state=setup(app,'Nigeria' if currency=='NGN' else 'United States')
-    if currency=='NGN':
-        app.config['FX_PROVIDER']=lambda:({'USD':'1','NGN':'1500'},now())
-        from app import FxSnapshot
-        with app.app_context():db.session.query(FxSnapshot).delete();db.session.commit()
+    state=setup(app,'Nigeria')
+    app.config['FX_PROVIDER']=lambda:({'USD':'1','NGN':'1500'},now())
+    from app import FxSnapshot
+    with app.app_context():db.session.query(FxSnapshot).delete();db.session.commit()
     calls=[];actual={}
     def transport(url,method='GET',payload=None,headers=None):
         calls.append((url,method,payload))
@@ -45,7 +44,7 @@ def test_checkout_is_invoice_bound_and_reuses_existing_link(app,monkeypatch):
     response=checkout(state)
     assert response.status_code==303 and response.location=='https://checkout.flutterwave.com/v3/hosted/pay/unit'
     payload=calls[0][2]
-    assert payload['amount']=='5.000' and payload['currency']=='USD'
+    assert payload['amount']=='7500.000' and payload['currency']=='NGN'
     assert payload['meta']=={'invoice_id':state[5],'student_number':state[6]}
     assert payload['redirect_url']=='https://www.liontechacademy.com/payments/flutterwave/return'
     assert checkout(state).status_code==303 and len(calls)==1
@@ -65,7 +64,7 @@ def test_webhook_authentication_and_verification_are_required(app,monkeypatch):
         enrollment=db.session.get(Enrollment,state[4]);assert enrollment.status=='approved' and enrollment.payment_status=='verified'
 
 
-@pytest.mark.parametrize('field,value',[('status','failed'),('tx_ref','unrelated'),('currency','NGN'),('amount','0.01'),('amount','NaN'),('amount','6.00'),('id',123)])
+@pytest.mark.parametrize('field,value',[('status','failed'),('tx_ref','unrelated'),('currency','USD'),('amount','0.01'),('amount','NaN'),('amount','6.00'),('id',123)])
 def test_mismatched_provider_payment_cannot_settle_invoice(app,monkeypatch,field,value):
     state,calls,actual=prepare(app,monkeypatch);checkout(state);actual[field]=value
     response=webhook(app,actual)

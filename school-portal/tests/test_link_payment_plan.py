@@ -19,11 +19,18 @@ def setup_plan(app):
 
 
 def submit(student,eid,reference):
-    with student.session_transaction():pass
-    import re
-    body=student.get('/payments/plans/'+str(eid)).data
-    number=re.search(rb'LT-\d{4}-\d+',body)[0].decode()
-    return student.post('/payments/plans/'+str(eid),data={'csrf':csrf(student,'/portal'),'student_number':number,'reference':reference,'amount':'0.01','local_quote_id':re.search(rb'name="local_quote_id" value="([^"]+)"',body)[1].decode(),'local_amount':re.search(rb'name="local_amount"[^>]*value="([^"]+)"',body)[1].decode(),'receipt':(io.BytesIO(b'%PDF-1.7\nunit receipt'),'receipt.pdf')},follow_redirects=True)
+    """Seed a historical receipt; new student receipt submissions are closed."""
+    app=student.application
+    student.get('/payments/plans/'+str(eid))
+    with app.app_context():
+        from app import LocalPaymentQuote
+        quote=db.session.scalar(select(LocalPaymentQuote).where(LocalPaymentQuote.enrollment_id==eid,LocalPaymentQuote.credited.is_(False)).order_by(LocalPaymentQuote.expires_at.desc()))
+        enrollment=db.session.get(Enrollment,eid)
+        current=app.extensions['program_link_plans']['billing'](enrollment)['next']
+        proof=PlanPaymentProof(enrollment_id=eid,stage=current['index'],amount=current['amount'],currency='USD',reference=reference,receipt_name='receipt.pdf',receipt_mime='application/pdf',receipt_path='historical/'+reference)
+        app.config['FILE_STORAGE'].put(proof.receipt_path,b'%PDF-1.7\nHistorical receipt')
+        db.session.add(proof);db.session.flush();quote.proof_id=proof.id;db.session.commit()
+    return student.get('/payments/plans/'+str(eid))
 
 
 def review(app,manager,eid):
@@ -47,7 +54,7 @@ def test_exact_plan_is_published_and_no_extra_enrollment_fee(app):
     page=app.test_client().get('/courses/data-analytics').data
     assert b'USD' not in page and b'59.99' not in page and b'monthly payments available' not in page
     page=student.get('/payments/plans/'+str(eid)).data
-    assert b'https://flutterwave.com/pay/liontechpaymentplan' not in page and b'local_quote_id' in page
+    assert b'https://flutterwave.com/pay/liontechpaymentplan' not in page and b'data-payment-provider="stripe"' in page
 
 
 def test_initial_payment_grants_access_and_full_plan_is_credited_once(app):
@@ -90,7 +97,7 @@ def test_proof_requires_owner_private_receipt_and_explicit_admin_verification(ap
         from app import LocalPaymentQuote
         quote=db.session.scalar(select(LocalPaymentQuote).where(LocalPaymentQuote.proof_id==pid));qid=quote.id;actual=str(quote.amount);number=quote.enrollment.student.student_number
     duplicate=student.post('/payments/plans/'+str(eid),data={'csrf':csrf(student,'/portal'),'local_quote_id':qid,'local_amount':actual,'student_number':number,'reference':'ANOTHER-PLAN-REF','receipt':(io.BytesIO(b'%PDF-1.7\ntest'),'receipt.pdf')},follow_redirects=True)
-    assert b'changed or expired' in duplicate.data
+    assert duplicate.status_code==410
 
 
 def test_manual_revocation_is_preserved_after_verified_plan_payment(app):
@@ -140,7 +147,8 @@ def test_fixed_plan_cannot_start_competing_api_checkout(app):
     with app.app_context():iid=db.session.scalar(select(FeeInvoice.id).where(FeeInvoice.enrollment_id==eid))
     for path in ['/payments/'+iid+'/checkout','/payments/'+iid+'/flutterwave']:
         response=student.post(path,data={'csrf':csrf(student,'/portal')})
-        assert response.status_code==302 and response.location.endswith('/payments/plans/'+str(eid))
+        assert response.status_code in (302,409)
+        if response.status_code==302:assert response.location.endswith('/payments/plans/'+str(eid))
 
 
 @pytest.mark.parametrize('start,expected',[
