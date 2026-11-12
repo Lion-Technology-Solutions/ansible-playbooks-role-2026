@@ -29,39 +29,32 @@ def test_template_validation_blocks_media_actions_pending_approval_and_wrong_fie
     assert error.value.status==expected
 
 
-def test_account_review_email_fallback_and_plain_whatsapp_payload(app,monkeypatch):
-    student=app.test_client();register(student)
-    for key,value in {**credentials(),'SENDGRID_API_KEY':'unit','SENDGRID_FROM_EMAIL':'notices@example.com'}.items():monkeypatch.setenv(key,value)
-    sent=[]
-    app.config['LIFECYCLE_HTTP']=lambda *args,**kwargs:(sent.append((args,kwargs)) or {'sid':'SM'+'b'*32})
-    app.config['WHATSAPP_TEMPLATE_VALIDATOR']=validate
-    app.config['WHATSAPP_TEMPLATE_HTTP']=lambda url,**kwargs:({'whatsapp':{'status':'approved','content_type':'twilio/text'}} if url.endswith('/ApprovalRequests') else {'types':{'twilio/text':{'body':'Student {{1}}. Status {{2}}. Link {{3}}. Sign in.'}}})
+def test_signup_email_to_student_and_admin_without_crm_whatsapp(app,monkeypatch):
+    register(app.test_client())
+    for key,value in {'SENDGRID_API_KEY':'unit','SENDGRID_FROM_EMAIL':'notifications@example.com'}.items():monkeypatch.setenv(key,value)
+    sent=[];app.config['LIFECYCLE_HTTP']=lambda *args,**kwargs:(sent.append(args) or {})
     with app.test_request_context('/'):
-        support=db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.kind=='support_account_created'))
-        whatsapp=db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.kind=='account_created',LifecycleEvent.channel=='whatsapp'))
-        app.extensions['notifications']['process'](support.id);app.extensions['notifications']['process'](whatsapp.id)
-        assert support.status=='accepted' and whatsapp.status=='accepted'
-    email=sent[0][0][2];message=sent[1][0][2]
-    assert email['personalizations'][0]['to'][0]['email']=='liontechacademy@gmail.com'
-    assert '/admin/students/' in email['content'][0]['value']
-    assert 'attachments' not in email
-    assert set(message)=={'From','To','ContentSid','ContentVariables'} and message['To']=='whatsapp:+14375756656'
+        for kind in ('support_account_created','account_created'):
+            row=db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.kind==kind))
+            app.extensions['notifications']['process'](row.id);assert row.status=='accepted'
+        assert not db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.channel=='whatsapp'))
+    messages=[call[2] for call in sent]
+    assert {message['personalizations'][0]['to'][0]['email'] for message in messages}=={'liontechacademy@gmail.com','student@example.com'}
+    assert all(message['from']['email']=='notifications@example.com' for message in messages)
 
 
-def test_incompatible_template_cannot_send_and_delivery_check_reads_only(app,monkeypatch):
-    manager,student=app.test_client(),app.test_client();admin(manager);register(student)
+def test_legacy_crm_whatsapp_is_cancelled_but_receipts_remain_readable(app,monkeypatch):
+    manager=app.test_client();admin(manager);register(app.test_client())
     for key,value in credentials().items():monkeypatch.setenv(key,value)
-    app.config['WHATSAPP_TEMPLATE_VALIDATOR']=validate
-    app.config['WHATSAPP_TEMPLATE_HTTP']=lambda *args,**kwargs:{'types':{'twilio/media':{'media':['https://example.com/receipt.pdf']}}}
     calls=[];app.config['LIFECYCLE_HTTP']=lambda *args,**kwargs:(calls.append((args,kwargs)) or {'status':'delivered','num_media':'0','error_code':None})
     with app.app_context():
-        row=db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.kind=='account_created',LifecycleEvent.channel=='whatsapp'));identity=row.id
+        row=app.extensions['notifications']['enqueue'](db.session.scalar(select(Student)),'account_created',channel='whatsapp');db.session.commit();identity=row.id
         app.extensions['notifications']['process'](identity)
-        assert row.status=='unsupported_whatsapp_template' and row.attempts==0 and not calls
+        assert row.status=='cancelled' and row.attempts==0 and not calls
         row.provider_id='SM'+'c'*32;row.status='accepted';db.session.commit()
     response=manager.post('/admin/notifications',data={'csrf':csrf(manager,'/admin/notifications'),'admin_password':'test-admin-password','action':'refresh_delivery'},follow_redirects=True)
-    assert response.status_code==200 and b'Delivered' in response.data and b'Media items: 0' in response.data
-    assert len(calls)==1 and calls[0][0][0].endswith('/Messages/SM'+'c'*32+'.json') and 'method' not in calls[0][1]
+    assert response.status_code==200 and b'Delivered' in response.data
+    assert len(calls)==1 and calls[0][0][0].endswith('/Messages/SM'+'c'*32+'.json')
 
 
 def test_public_reading_controls_and_professional_signin_copy(app):

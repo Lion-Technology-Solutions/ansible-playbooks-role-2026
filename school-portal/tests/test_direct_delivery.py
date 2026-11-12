@@ -9,12 +9,12 @@ def test_lifecycle_sends_before_response_without_queue(app,monkeypatch):
     monkeypatch.setattr('integration_jobs.publish',lambda *a:(_ for _ in ()).throw(AssertionError('No queue')))
     app.config.update(DIRECT_DELIVERY=True,LIFECYCLE_HTTP=lambda *a,**k:sent.append(a) or {})
     response=register(app.test_client())
-    assert response.status_code==200 and len(sent)==2
+    assert response.status_code==200 and len(sent)==3
     with app.app_context():
         event=db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.kind=='support_account_created'))
         assert event.status=='accepted'
         app.extensions['notifications']['process'](event.id)
-    assert len(sent)==2
+    assert len(sent)==3
 
 
 def test_lifecycle_provider_failure_preserves_account_and_failure_record(app,monkeypatch):

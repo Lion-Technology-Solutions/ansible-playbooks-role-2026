@@ -515,6 +515,17 @@ class ClassDelivery(db.Model):
     __table_args__=(UniqueConstraint('student_id','class_id','revision'),)
 
 
+class ClassReminderJob(db.Model):
+    __tablename__='portal_class_reminder_jobs'
+    id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
+    class_id=db.Column(db.Integer,db.ForeignKey('portal_classes.id'),nullable=False,index=True)
+    revision=db.Column(db.Integer,nullable=False)
+    due_at=db.Column(db.DateTime(timezone=True),nullable=False,index=True)
+    status=db.Column(db.String(20),nullable=False,default='pending')
+    attempts=db.Column(db.Integer,nullable=False,default=0)
+    __table_args__=(UniqueConstraint('class_id','revision'),)
+
+
 class StudentPreference(db.Model):
     __tablename__='portal_student_preferences'
     student_id=db.Column(db.String(36),db.ForeignKey('portal_students.id'),primary_key=True)
@@ -2178,6 +2189,8 @@ def create_app(config=None):
     install_students_console(app,db,globals(),dict(admin_required=admin_required))
     from staff_portal import install as install_staff_portal
     install_staff_portal(app,db,globals(),dict(admin_required=admin_required))
+    from class_reminders import install as install_class_reminders
+    app.extensions['class_reminders']=install_class_reminders(app,db,globals())
     return app
 
 

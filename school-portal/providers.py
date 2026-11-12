@@ -60,7 +60,7 @@ def send_class_email(student,lesson,calendar):
     body=f'Hello {student.name},\nYour class schedule has been updated.\nClass: {lesson.title}\nProgram: {lesson.course.name}\nYour time: {local}\nDuration: {detail.duration if detail else 120} minutes\nStudent number: {student.student_number}\nView class / Join: {link}\nSign in with your student account. Joining opens {detail.join_minutes if detail else 15} minutes before class and closes at its scheduled end. Paid, approved enrollment is required.\nThe attached calendar invitation uses this same secure portal link.'
     html='<p>'+escape(body).replace('\n','<br>')+'</p><p><a href="'+escape(link,quote=True)+'" style="display:inline-block;background:#0755db;color:white;padding:14px 24px;border-radius:8px;text-decoration:none">View class / Join</a></p>'
     data={'personalizations':[{'to':[{'email':student.email}]}],
-          'from':{'email':setting('SENDGRID_FROM_EMAIL')},'subject':'LionTech class update: '+lesson.title,
+          'from':{'email':setting('SENDGRID_FROM_EMAIL')},'reply_to':{'email':current_app.config.get('ADMIN_NOTIFICATION_EMAIL','liontechacademy@gmail.com')},'subject':'LionTech class update: '+lesson.title,
           'content':[{'type':'text/plain','value':body},{'type':'text/html','value':html}],
           'attachments':[{'content':base64.b64encode(calendar.encode()).decode(),'type':'text/calendar; method=REQUEST','filename':'liontech-class.ics','disposition':'attachment'}]}
     return current_app.config.get('CLASS_HTTP',api)('https://api.sendgrid.com/v3/mail/send','POST',data,{'Authorization':'Bearer '+setting('SENDGRID_API_KEY')})

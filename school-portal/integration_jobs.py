@@ -32,9 +32,24 @@ def _invoke_lifecycle(identity):
         return app.extensions['notifications']['process'](identity)
 
 
+def _invoke_reminder(identity):
+    from app import app
+    with app.test_request_context('/internal/class-reminder-worker',method='GET'):
+        app.preprocess_request()
+        return app.extensions['class_reminders']['fire'](identity)
+
+
+def publish_class_reminder(payload,delay):
+    return asyncio.run(send(TOPIC,payload,delay=delay,retention=timedelta(days=7),idempotency_key='class-reminder-'+payload['id']))
+
+
 @subscribe(topic=TOPIC,consumer_group='liontech-integration-delivery',retry_after=60,max_concurrency=8,max_attempts=5)
 async def deliver(message:Message[dict[str,object]]) -> None:
     payload=message.payload;kind=payload.get('kind')
+    if kind=='class_reminder':
+        identity=payload.get('id')
+        if not isinstance(identity,str) or len(identity)!=32 or any(c not in '0123456789abcdef' for c in identity):raise ValueError('Invalid class reminder identifier.')
+        await asyncio.to_thread(_invoke_reminder,identity);return
     if kind=='lifecycle_batch':
         identities=payload.get('ids')
         if not isinstance(identities,list) or not 1<=len(identities)<=30 or any(not isinstance(value,str) or len(value)!=32 or any(c not in '0123456789abcdef' for c in value) for value in identities):raise ValueError('Invalid notification batch.')

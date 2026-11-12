@@ -365,6 +365,7 @@ def install(app,db,m,h):
 
     def queue_class(lesson,detail):
         if not detail.published:return
+        if 'class_reminders' in app.extensions:app.extensions['class_reminders']['plan'](lesson,detail)
         query=select(Enrollment).where(Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified')
         if detail.cohort_id:query=query.where(Enrollment.cohort_id==detail.cohort_id)
         for enrollment in db.session.scalars(query):

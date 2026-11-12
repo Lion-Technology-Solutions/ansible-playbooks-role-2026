@@ -97,7 +97,7 @@ def install(app,db,m,h):
         for row in list(session_.new)+list(session_.dirty):
             state=inspect(row)
             if isinstance(row,Student) and state.pending:
-                enqueue(row,'account_created',channel='whatsapp',session_=session_)
+                enqueue(row,'account_created',channel='email',session_=session_)
                 enqueue(row,'support_account_created',channel='email',session_=session_)
             elif isinstance(row,Control):
                 student=session_.get(Student,row.student_id)
@@ -116,6 +116,12 @@ def install(app,db,m,h):
                     if row.status=='approved':enqueue(student,'enrollment_approved',payload=payload,session_=session_)
                     elif row.status in ('revoked','rejected') and ('approved' in state.attrs.status.history.deleted or row.status=='revoked'):enqueue(student,'access_revoked',payload=payload,session_=session_)
     def message(event):
+        if event.kind=='account_created':
+            return 'Welcome to LionTech Academy',('Hello '+event.student.name+',\nYour student account has been created.\nStudent number: '+event.student.student_number+'\nVerify your email if prompted, then select your program and complete enrollment in the portal. Account creation does not confirm payment or grant learning access.\n'+ORIGIN+'/student/login\nSupport: liontechacademy@gmail.com')
+        if event.kind=='class_reminder':
+            lesson=db.session.get(m['ClassSession'],event.payload['class_id'])
+            local=app.extensions['local_experience']['time'](lesson.starts_at,event.student)
+            return 'Class reminder — '+lesson.title,('Hello '+event.student.name+',\nYour class starts soon.\nClass: '+lesson.title+'\nProgram: '+lesson.course.name+'\nYour local class time: '+local+'\nStudent number: '+event.student.student_number+'\nView class / Join: '+ORIGIN+'/classes/'+str(lesson.id)+'\nSign in with your student account. The Join button opens according to the class joining window.')
         if event.kind=='support_payment_review':
             return 'Payment receipt ready for review',('Student: '+event.student.name+'\nStudent number: '+event.student.student_number+'\nProgram: '+event.payload.get('course','')+'\nAmount submitted for verification: '+event.payload.get('amount','')+'\nReview privately: '+ORIGIN+'/admin?view=payments\nSign in and verify actual funds before approving access.')
         if event.kind=='support_account_created':
@@ -157,7 +163,10 @@ def install(app,db,m,h):
         return title,'\n\n'.join(lines)
     def process(identity):
         row=db.session.scalar(select(Event).where(Event.id==identity).with_for_update().execution_options(populate_existing=True))
-        if not row or row.status=='accepted' or row.attempts>=5:return
+        if not row or row.status in ('accepted','cancelled','expired') or row.attempts>=5:return
+        # Retire unsent CRM/HubSpot alerts, including rows queued by earlier releases.
+        if row.channel=='whatsapp' and row.kind not in ('class_schedule','class_reminder','tuition_status'):
+            row.status='cancelled';db.session.commit();return
         if aware(row.created_at)<now()-timedelta(days=7):row.status='expired';db.session.commit();return
         student=row.student
         if row.kind=='tuition_status':
@@ -187,33 +196,43 @@ def install(app,db,m,h):
                         if balance>0:row.payload={**row.payload,'amount':str(balance)+' '+fixed.currency,'due':due[0]['due'].isoformat()}
                     else:settled=True
             if settled:row.status='cancelled';db.session.commit();return
+        if row.kind in ('class_schedule','class_reminder'):
+            lesson=db.session.get(m['ClassSession'],row.payload.get('class_id'))
+            detail=db.session.get(m['ScheduledClass'],lesson.id) if lesson else None
+            candidates=select(Enrollment).where(Enrollment.student_id==student.id,Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified') if lesson else None
+            if candidates is not None and detail and detail.cohort_id:candidates=candidates.where(Enrollment.cohort_id==detail.cohort_id)
+            enrollment=db.session.scalar(candidates) if candidates is not None else None
+            control=db.session.get(Control,student.id)
+            instant=app.extensions['class_reminders']['clock']() if row.kind=='class_reminder' else now()
+            limit_at=aware(lesson.starts_at) if row.kind=='class_reminder' and lesson else aware(lesson.starts_at)+timedelta(minutes=detail.duration) if lesson and detail else instant
+            if not enrollment or (control and not control.active) or db.session.get(m['StudentArchive'],student.id) or not detail or not detail.published or detail.revision!=row.payload.get('revision') or (detail.cohort_id and detail.cohort_id!=enrollment.cohort_id) or limit_at<=instant:
+                row.status='cancelled';db.session.commit();return
+            pref=db.session.get(m['StudentIntegrationPreference'],student.id)
+            if row.channel=='email' and pref and not pref.reminders:
+                row.status='cancelled';db.session.commit();return
         transport=app.config.get('LIFECYCLE_HTTP',api)
         try:
             if row.channel=='email':
                 if not service['ready']('email'):row.status='awaiting_email';db.session.commit();return
                 values=service['config']('email');title,body=message(row);recipient=row.payload.get('recipient') or student.email
                 if row.kind in ('support_account_created','support_payment_review'):
-                    administrator=db.session.get(m['AdminAccount'],1)
-                    recipient=administrator.email if administrator else app.config.get('SCHOOL_ADMIN_EMAIL') or os.environ.get('SCHOOL_ADMIN_EMAIL') or 'liontechacademy@gmail.com'
+                    recipient=app.config.get('ADMIN_NOTIFICATION_EMAIL','liontechacademy@gmail.com')
                 row.attempts+=1
-                transport('https://api.sendgrid.com/v3/mail/send','POST',{'personalizations':[{'to':[{'email':recipient}]}],'from':{'email':values['SENDGRID_FROM_EMAIL']},'subject':title,'content':[{'type':'text/plain','value':body}]},{'Authorization':'Bearer '+values['SENDGRID_API_KEY']})
+                transport('https://api.sendgrid.com/v3/mail/send','POST',{'personalizations':[{'to':[{'email':recipient}]}],'from':{'email':values['SENDGRID_FROM_EMAIL']},'reply_to':{'email':app.config.get('ADMIN_NOTIFICATION_EMAIL','liontechacademy@gmail.com')},'subject':title,'content':[{'type':'text/plain','value':body}]},{'Authorization':'Bearer '+values['SENDGRID_API_KEY']})
             else:
                 values=service['config']('whatsapp')
-                template=values.get('TWILIO_TEMPLATE_SID','');recipient='whatsapp:+14375756656'
-                variables={'1':student.student_number,'2':'New account ready for review','3':ORIGIN+'/admin/students/'+student.id+'/review'}
-                if row.kind=='class_schedule':
+                template='';recipient='';variables={}
+                if row.kind in ('class_schedule','class_reminder'):
                     consent=db.session.get(m['ClassWhatsAppPreference'],student.id)
                     lesson=db.session.get(m['ClassSession'],row.payload.get('class_id'))
                     detail=db.session.get(m['ScheduledClass'],lesson.id) if lesson else None
-                    enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==student.id,Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified')) if lesson else None
-                    control=db.session.get(Control,student.id)
-                    if not consent or not consent.enabled or not consent.consented_at or not enrollment or (control and not control.active) or not detail or not detail.published or detail.revision!=row.payload.get('revision') or (detail.cohort_id and detail.cohort_id!=enrollment.cohort_id) or aware(lesson.starts_at)+timedelta(minutes=detail.duration)<now():
-                        row.status='cancelled';db.session.commit();return
+                    if not consent or not consent.enabled or not consent.consented_at:
+                        row.status='awaiting_student_consent';db.session.commit();return
                     if not re.fullmatch(r'\+[1-9][0-9]{6,14}',consent.phone):row.status='invalid_recipient';db.session.commit();return
-                    template=values.get('TWILIO_CLASS_TEMPLATE_SID','');recipient='whatsapp:'+consent.phone
+                    template=(values.get('TWILIO_CLASS_REMINDER_TEMPLATE_SID') or values.get('TWILIO_CLASS_TEMPLATE_SID','')) if row.kind=='class_reminder' else values.get('TWILIO_CLASS_TEMPLATE_SID','');recipient='whatsapp:'+consent.phone
                     pref=db.session.get(m['StudentPreference'],student.id);zone=pref.timezone if pref else 'America/Toronto'
                     local=app.extensions['local_experience']['time'](lesson.starts_at,student)
-                    variables={'1':student.student_number,'2':lesson.title.replace('\n',' ').replace('\r',' '),'3':local,'4':ORIGIN+'/classes/'+str(lesson.id)}
+                    variables={'1':student.student_number,'2':(('Class reminder: ' if row.kind=='class_reminder' else '')+lesson.title).replace('\n',' ').replace('\r',' '),'3':local,'4':ORIGIN+'/classes/'+str(lesson.id)}
                 if row.kind=='tuition_status':
                     consent=db.session.get(m['TuitionWhatsAppPreference'],student.id)
                     if not consent or not consent.enabled or not consent.consented_at:
@@ -296,7 +315,7 @@ def install(app,db,m,h):
     def daily_notifications():
         secret=app.config.get('CRON_SECRET') or os.environ.get('CRON_SECRET','')
         if not secret or not hmac.compare_digest(request.headers.get('Authorization',''),'Bearer '+secret):abort(401)
-        return jsonify(reminders=due_reminders(),processed=drain(200),staff_mail=app.extensions['staff_portal']['drain']() if 'staff_portal' in app.extensions else 0)
+        return jsonify(class_reminders=app.extensions['class_reminders']['arm'](),reminders=due_reminders(),processed=drain(200),staff_mail=app.extensions['staff_portal']['drain']() if 'staff_portal' in app.extensions else 0)
 
     def refresh_delivery(limit=20,force=False):
         values=service['config']('whatsapp');result_counts={'checked':0,'failed':0,'missing':0}
@@ -346,7 +365,7 @@ def install(app,db,m,h):
         elif not app.testing or app.config.get('AUTO_CHECK_WHATSAPP_DELIVERY'):
             # One recent message per page view; cache for two minutes. This never sends messages.
             refresh_delivery(limit=1)
-        return render_template('notification_admin.html',admin_view='notifications',events=db.session.scalars(select(Event).order_by(Event.created_at.desc()).limit(100)).all(),email_ready=service['ready']('email'),whatsapp_ready=service['ready']('whatsapp') and bool(re.fullmatch(r'HX[0-9a-fA-F]{32}',service['config']('whatsapp').get('TWILIO_TEMPLATE_SID',''))))
+        return render_template('notification_admin.html',admin_view='notifications',events=db.session.scalars(select(Event).order_by(Event.created_at.desc()).limit(100)).all(),email_ready=service['ready']('email'),reminder_jobs=dict(db.session.execute(select(m['ClassReminderJob'].status,db.func.count()).group_by(m['ClassReminderJob'].status)).all()),whatsapp_ready=service['ready']('whatsapp') and bool(re.fullmatch(r'HX[0-9a-fA-F]{32}',service['config']('whatsapp').get('TWILIO_CLASS_TEMPLATE_SID',''))))
 
     @app.route('/admin/students/<student_id>/review',methods=['GET','POST'])
     @h['admin_required']
