@@ -1078,6 +1078,9 @@ def upcoming_cohorts():
     return [row for row in rows if row.start_date in available.get(row.course_id,[])]
 
 
+from staff_models import define as define_staff_models
+globals().update(define_staff_models(db,now))
+
 def create_app(config=None):
     app = Flask(__name__)
     testing = os.environ.get('SCHOOL_TESTING') == '1'
@@ -1124,6 +1127,12 @@ def create_app(config=None):
                         seed_stages(connection,globals())
                     schema_ready = True
         g.student = None
+        g.staff = None
+        if session.get('staff_id'):
+            staff=db.session.get(StaffMember,session['staff_id'])
+            if not staff or not staff.active or not staff.verified_at or session.get('staff_revision')!=staff.revision:
+                session.clear()
+            else:g.staff=staff
         student = db.session.get(Student, session.get('student_id')) if session.get('student_id') else None
         if student:
             control=db.session.get(StudentControl,student.id)
@@ -1142,6 +1151,7 @@ def create_app(config=None):
             result=app.extensions['profile_sessions']['guard']()
             if result is not None:return result
         if request.method == 'POST' and request.endpoint not in ('stripe_webhook','flutterwave_webhook','chatgpt_context','chatgpt_draft','chatgpt_apply'):
+            if request.endpoint in ('staff_document_upload',):request.max_content_length=2*1024*1024+16384
             if request.endpoint in ('student_profile','admin_profile'):
                 request.max_content_length=2*1024*1024+16384
             if request.endpoint == 'manual_fee':
@@ -2166,6 +2176,8 @@ def create_app(config=None):
     install_profile_sessions(app,db,globals())
     from students_console import install as install_students_console
     install_students_console(app,db,globals(),dict(admin_required=admin_required))
+    from staff_portal import install as install_staff_portal
+    install_staff_portal(app,db,globals(),dict(admin_required=admin_required))
     return app
 
 

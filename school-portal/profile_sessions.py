@@ -25,9 +25,12 @@ def install(app, db, m):
     def actor():
         if session.get('admin'):
             return 'admin:1'
+        if session.get('staff_id'):
+            return 'staff:'+str(session['staff_id'])
         if session.get('student_id'):
             return 'student:'+session['student_id']
         return None
+    def login_endpoint(identity):return 'admin_login' if identity=='admin:1' else 'staff_login' if identity and identity.startswith('staff:') else 'login'
     def digest(token):
         return hashlib.sha256(token.encode()).hexdigest()
     def record():
@@ -37,10 +40,10 @@ def install(app, db, m):
         row=record()
         if row:
             row.revoked=True;db.session.commit()
-        session.clear();g.student=None
+        session.clear();g.student=None;g.staff=None
     def failure(reason, previous):
         end()
-        destination=url_for('admin_login' if previous=='admin:1' else 'login',reason=reason)
+        destination=url_for(login_endpoint(previous),reason=reason)
         if request.endpoint in ('session_status','session_activity','session_end') or request.is_json:
             return jsonify(authenticated=False,reason=reason,login_url=destination),401
         return redirect(destination,303 if request.method!='GET' else 302)
@@ -82,7 +85,7 @@ def install(app, db, m):
             return jsonify(authenticated=False,login_url=url_for('login')),401
         expires=min(m['aware'](row.last_active_at)+timedelta(minutes=15),m['aware'](row.absolute_expires_at))
         return jsonify(authenticated=True,expires_at=expires.isoformat(),server_now=clock().isoformat(),channel=row.channel,
-            login_url=url_for('admin_login' if actor()=='admin:1' else 'login'),warning_seconds=60)
+            login_url=url_for(login_endpoint(actor())),warning_seconds=60)
     @app.get('/session/status')
     def session_status():
         return status()
@@ -103,7 +106,7 @@ def install(app, db, m):
     @app.post('/session/end')
     def session_end():
         previous=actor();end()
-        return jsonify(authenticated=False,login_url=url_for('admin_login' if previous=='admin:1' else 'login',reason='signed-out'))
+        return jsonify(authenticated=False,login_url=url_for(login_endpoint(previous),reason='signed-out'))
     def require_admin():
         if not session.get('admin'):
             abort(403)
@@ -143,5 +146,5 @@ def install(app, db, m):
     def context():
         current=actor();row=(getattr(g,'portal_activity',None) or record()) if current else None
         return dict(preview_role=session.get('role_preview'),preview_role_name=ROLES.get(session.get('role_preview'),{}).get('name'),
-            session_activity_enabled=bool(current),session_channel=row.channel if row else '',session_login_url=url_for('admin_login' if current=='admin:1' else 'login'))
+            session_activity_enabled=bool(current),session_channel=row.channel if row else '',session_login_url=url_for(login_endpoint(current)))
     app.extensions['profile_sessions']=dict(guard=guard,end=end,roles=ROLES)

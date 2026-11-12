@@ -18,3 +18,5 @@ pyotp==2.10.0
 Authlib==1.9.5
 qrcode==8.2
 requests==2.34.2
+
+reportlab==4.4.9
