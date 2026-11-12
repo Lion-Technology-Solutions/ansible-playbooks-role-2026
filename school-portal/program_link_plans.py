@@ -95,6 +95,12 @@ def install(app,db,m,h):
         if not eligible(enrollment):return None
         source=policy(enrollment.course)
         stages=dated_stages(source.stages,enrollment.cohort.start_date if enrollment.cohort else None,m['aware'](enrollment.created_at).astimezone(ZoneInfo('America/Toronto')).date()) if uses_default_stages(source.stages) else source.stages
+        if enrollment.course.slug.startswith('cybersecurity'):
+            from pathways import cyber_payment_stages
+            stages=cyber_payment_stages(source.stages,enrollment.cohort.start_date if enrollment.cohort else None)
+            choice=session.get('level_payment_choice',{})
+            if choice.get('course_id')==enrollment.course_id and choice.get('plan')=='full':
+                stages=[dict(label='Full tuition — enrollment included',amount=str(source.total),timing='Due immediately',due=m['academy_today']().isoformat(),first_class=enrollment.cohort.start_date.isoformat() if enrollment.cohort else None)]
         if enrollment.course.slug in ('data-analytics-intermediate','data-analytics-advanced') and len(stages)==1:
             stages=[dict(stages[0],due=m['aware'](enrollment.created_at).astimezone(ZoneInfo('America/Toronto')).date().isoformat(),first_class=enrollment.cohort.start_date.isoformat() if enrollment.cohort else None)]
         snapshot=Plan(enrollment_id=enrollment.id,currency=source.currency,total=source.total,checkout_url=source.checkout_url,stages=stages)
@@ -205,6 +211,10 @@ def install(app,db,m,h):
         start=cohort.start_date if cohort and cohort.course_id==course_id else None
         source=db.session.get(Policy,course_id)
         if not source:return []
+        if db.session.get(m['Course'],course_id).slug.startswith('cybersecurity'):
+            from pathways import cyber_payment_stages
+            parts=cyber_payment_stages(source.stages,start)
+            return [dict(part,due=date.fromisoformat(part['due']) if part.get('due') else None,first_class=start) for part in parts]
         return [dict(part,due=date.fromisoformat(part['due']) if part.get('due') else None,first_class=date.fromisoformat(part['first_class']) if part.get('first_class') else None) for part in dated_stages(source.stages,start,m['academy_today']())]
     @app.context_processor
     def link_plan_context():

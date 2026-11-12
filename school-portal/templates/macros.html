@@ -8,7 +8,7 @@
   <dl>
     <div><dt>Duration</dt><dd>{{ course.profile.duration or 'Contact LionTech for the program duration.' }}</dd></div>
     <div><dt>Tuition</dt><dd>{% set offer=offer_for(course.id,country) %}{{ display_money(offer.total,offer.currency) if offer else 'Contact support for current pricing.' }}</dd></div>
-    <div><dt>Schedule</dt><dd>{{ 'New intakes start every Saturday.' if course.slug.startswith('data-analytics') else 'New batches start every Saturday and Sunday.' }} Published class sessions appear in your local time zone.</dd></div>
+    <div><dt>Schedule</dt><dd>{{ 'Foundation intakes start on the last Monday of every month from January 2027.' if course.slug.startswith('cybersecurity') else 'New intakes start every Saturday.' if course.slug.startswith('data-analytics') else 'New batches start every Saturday and Sunday.' }} Published class sessions appear in your local time zone.</dd></div>
   </dl>
   {% set policy=program_payment_policy(course) %}{% if policy %}{% include 'link_plan_summary.html' %}{% else %}<p><strong>Enrollment payment: {{ display_money(5) }}</strong> · separate from tuition.</p>{% endif %}
   {% if course.slug.startswith('data-analytics') %}<p><a href="{{ url_for('analytics_catalog') }}">Explore Data Analytics weekly lessons →</a></p>{% endif %}

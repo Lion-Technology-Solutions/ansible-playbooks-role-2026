@@ -1,0 +1,13 @@
+"""Cybersecurity levels approved for the January 2027 launch."""
+STAGES = [
+ dict(key='foundation',slug='cybersecurity',name='Foundation',weeks=8,price='199.00',day='Monday',summary='Build the confidence to protect devices, accounts and information.',titles=[
+ 'Introduction to Cybersecurity','Computer and Operating System Essentials','Networking and the Internet','Cyber Threats and Social Engineering','Identity and Access Security','Device, Data and Online Protection','Introduction to Security Tools and Logs','Foundation Project and Assessment'],labs=[
+ 'Small-business threat and risk assessment','Windows security settings','Linux navigation and permissions','Home network map','Simulated phishing investigation','Password and MFA protection plan','Backup and recovery exercise','Login log investigation','Device security checklist','Security improvement plan']),
+ dict(key='intermediate',slug='cybersecurity-intermediate',name='Intermediate',weeks=8,price='399.00',day='Wednesday',summary='Learn to defend systems, monitor threats and respond to incidents.',titles=[
+ 'Building a Security Lab','Windows and Linux Hardening','Network Defense and Traffic Analysis','Vulnerability Management','Logs, SIEM and Security Monitoring','Intrusion Detection and Alert Investigation','Incident Response and Recovery','Cyber Defense Capstone'],labs=[
+ 'Build an isolated security lab','Harden Windows accounts and services','Harden Linux permissions and services','Analyse network traffic with Wireshark','Configure and verify firewall rules','Scan an authorized training system','Prioritize vulnerabilities and verify fixes','Investigate failed logins in a SIEM','Investigate a Suricata alert','Incident-response investigation']),
+ dict(key='advanced',slug='cybersecurity-advanced',name='Advanced',weeks=8,price='401.00',day='Thursday',summary='Practise authorized testing, investigations and security reporting.',titles=[
+ 'Ethical Hacking Methodology and Scope','Reconnaissance and Service Enumeration','Web Application Security','Vulnerability Validation and Exploitation','Privilege Escalation and Identity Weaknesses','Cloud and Application Delivery Security','Digital Forensics and Threat Hunting','Final Security Assessment and Presentation'],labs=[
+ 'Testing scope and rules of engagement','Discover assets in an authorized lab','Enumerate services and document exposure','Web authentication investigation','Access control testing in a training application','Validate a training-target vulnerability','Investigate a privilege misconfiguration','Cloud IAM configuration assessment','Reconstruct an incident timeline','Final security assessment and presentation'])
+]
+CYBER_SLUGS=tuple(s['slug'] for s in STAGES)

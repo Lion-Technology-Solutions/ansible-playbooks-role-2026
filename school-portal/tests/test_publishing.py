@@ -92,8 +92,8 @@ def test_unpublishing_preserves_current_students_access(app):
     assert visitor.get('/courses/data-analytics').status_code==404
     catalogue=visitor.get('/').data
     assert b'href="/courses/data-analytics"' not in catalogue
-    assert b'href="/courses/data-analytics-intermediate"' in catalogue
-    assert b'href="/courses/data-analytics-advanced"' in catalogue
+    assert b'href="/programs/data-analytics"' in catalogue
+    assert visitor.get('/programs/data-analytics/advanced').status_code==200
     page=student.get('/portal')
     assert page.status_code==200 and b'Register for live class' in page.data
     assert 'yBAAj2k5TM2lEqpMXZY3ZQ' in student.get(f'/course/{course}/register').location
