@@ -116,7 +116,7 @@ def test_seeding_preserves_existing_plans_and_is_idempotent(app):
         assert db.session.scalar(select(PaymentEntry.amount))==Decimal('10.00')
         assert db.session.get(CoursePaymentPolicy,courses['data-analytics']).total==Decimal('59.99')
         assert len(db.session.scalars(select(Course).where(Course.slug.like('data-analytics%'))).all())==3
-        assert len(db.session.scalars(select(CoursePaymentPolicy)).all())==3
+        assert len(db.session.scalars(select(CoursePaymentPolicy).where(CoursePaymentPolicy.course_id.in_([courses[s['slug']] for s in STAGES]))).all())==3
 
 
 def test_every_week_opens_its_own_draft_workspace(app):

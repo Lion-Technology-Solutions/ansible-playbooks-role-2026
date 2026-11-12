@@ -81,7 +81,8 @@ def test_registration_country_payments_dates_and_existing_students(app):
     existing=app.test_client()
     register(existing,email='existing@example.com',kind='existing')
     page=existing.get('/enrollments')
-    assert b'name="cohort_id"' in page.data
+    assert b'Choose your level' in page.data
+    assert b'name="cohort_id"' in existing.get('/programs/data-analytics/foundation/enroll').data
     request_enrollment(existing,course,cohort)
     with app.app_context():
         s=db.session.scalar(select(Student).where(Student.email=='existing@example.com'))
@@ -179,7 +180,7 @@ def test_recordings_notifications_schedule_and_grading(app):
     assert b'Future recording' not in student.get('/portal').data
     post(manager,'/admin',action='assessment',course_id=course,title='SQL Quiz',kind='quiz',instructions='Write a SELECT query.',due_at='')
     with app.app_context():
-        assessment_id=db.session.scalar(select(Assessment.id))
+        assessment_id=db.session.scalar(select(Assessment.id).where(Assessment.course_id==course,Assessment.title=='SQL Quiz'))
     page=student.post(f'/assessment/{assessment_id}/submit',data={'csrf':csrf(student,'/portal'),'answer':'<script>alert(1)</script> SELECT * FROM learners','url':'https://github.com/example/project'},follow_redirects=True)
     assert page.status_code == 200
     admin_page=manager.get('/admin?view=classes')

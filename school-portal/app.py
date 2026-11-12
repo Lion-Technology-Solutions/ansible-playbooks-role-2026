@@ -1072,6 +1072,9 @@ def next_start_dates(today=None):
 def available_start_dates(course,today=None):
     from start_dates import analytics_starts
     day=today or academy_today()
+    if course.slug.startswith('cybersecurity'):
+        from pathways import cyber_starts
+        return cyber_starts(day)
     return analytics_starts(day) if course.slug.startswith('data-analytics') else next_start_dates(day)
 
 
@@ -1083,11 +1086,14 @@ def upcoming_cohorts():
         table = Cohort.__table__
         for course_id,dates in available.items():
             stored=set(connection.execute(select(table.c.start_date).where(table.c.course_id==course_id,table.c.start_date.in_(dates))).scalars())
-            missing=[dict(course_id=course_id,start_date=start,label='Weekend intake') for start in dates if start not in stored]
+            missing=[dict(course_id=course_id,start_date=start,label='Program intake') for start in dates if start not in stored]
             if missing:connection.execute(table.insert(),missing)
     rows=db.session.scalars(select(Cohort).order_by(Cohort.start_date,Cohort.id)).all()
     return [row for row in rows if row.start_date in available.get(row.course_id,[])]
 
+
+from pathway_models import define as define_pathway_models
+globals().update(define_pathway_models(db))
 
 from staff_models import define as define_staff_models
 globals().update(define_staff_models(db,now))
@@ -1136,6 +1142,8 @@ def create_app(config=None):
                             seed_policy(connection,globals())
                         from analytics_portal import seed_stages
                         seed_stages(connection,globals())
+                        from pathways import seed_pathways
+                        seed_pathways(connection,globals())
                     schema_ready = True
         g.student = None
         g.staff = None
@@ -1162,6 +1170,7 @@ def create_app(config=None):
             result=app.extensions['profile_sessions']['guard']()
             if result is not None:return result
         if request.method == 'POST' and request.endpoint not in ('stripe_webhook','flutterwave_webhook','chatgpt_context','chatgpt_draft','chatgpt_apply'):
+            if request.endpoint=='lab_submit':request.max_content_length=12*1024*1024
             if request.endpoint in ('staff_document_upload',):request.max_content_length=2*1024*1024+16384
             if request.endpoint in ('student_profile','admin_profile'):
                 request.max_content_length=2*1024*1024+16384
@@ -1199,7 +1208,7 @@ def create_app(config=None):
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','devops_catalog','analytics_catalog','role_switcher','role_preview','devops_workspace','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','devops_catalog','analytics_catalog','program_catalog','program_levels','program_level','level_enroll','teaching_labs','teaching_lab_reviews','lab_page','role_switcher','role_preview','devops_workspace','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
 
     def student_required():
         def decorate(fn):
@@ -1292,7 +1301,7 @@ def create_app(config=None):
         if g.student:
             enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==g.student.id,Enrollment.course_id==course.id))
             if not enrollment:
-                enrollment=Enrollment(student_id=g.student.id,course_id=course.id,cohort_id=cohort.id if g.student.kind=='new' or course.slug.startswith('data-analytics') else None)
+                enrollment=Enrollment(student_id=g.student.id,course_id=course.id,cohort_id=cohort.id if g.student.kind=='new' or course.slug.startswith(('data-analytics','cybersecurity')) else None)
                 db.session.add(enrollment);db.session.commit()
             return redirect(url_for('global_payment',enrollment_id=enrollment.id))
         session['application']={'course_id':course.id,'cohort_id':cohort.id}
@@ -1571,6 +1580,11 @@ def create_app(config=None):
     @app.get('/')
     def home():
         courses = db.session.scalars(published_courses()).all()
+        grouped={}
+        for c in courses:
+            family='data-analytics' if c.slug.startswith('data-analytics') else 'cybersecurity' if c.slug.startswith('cybersecurity') else c.slug
+            if family not in grouped:grouped[family]=db.session.scalar(select(Course).where(Course.slug==family)) or c
+        courses=list(grouped.values())
         cohorts = upcoming_cohorts()
         events = db.session.scalars(public_updates().where(PublicUpdate.kind == 'event',
             db.func.coalesce(PublicUpdate.ends_at, PublicUpdate.starts_at) >= now()).order_by(PublicUpdate.starts_at).limit(3)).all()
@@ -1582,6 +1596,10 @@ def create_app(config=None):
         course = db.session.scalar(published_courses().where(Course.slug == slug))
         if not course:
             abort(404)
+        if course.slug.startswith(('cybersecurity','data-analytics')):
+            program='cybersecurity' if course.slug.startswith('cybersecurity') else 'data-analytics'
+            level='intermediate' if course.slug.endswith('-intermediate') else 'advanced' if course.slug.endswith('-advanced') else None
+            return redirect(url_for('program_level',program=program,level=level) if level else url_for('program_levels',program=program))
         return render_template('course_page.html', course=course, cohorts=upcoming_cohorts(), preview=False)
 
     @app.get('/updates')
@@ -1656,7 +1674,7 @@ def create_app(config=None):
                 db.session.add(StudentPreference(student_id=student.id,language=language,timezone=app.extensions['local_experience']['browser_zone']() or residence(country)['timezone']))
                 enrollment=None
                 if chosen_course:
-                    enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' or chosen_course.slug.startswith('data-analytics') else None)
+                    enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' or chosen_course.slug.startswith(('data-analytics','cybersecurity')) else None)
                     db.session.add(enrollment)
                 db.session.commit()
                 flash(f'Your student number is {student.student_number}. Email verification activates your account; verified payment activates enrollment.')
@@ -1726,7 +1744,7 @@ def create_app(config=None):
                     raise ValueError('This course is not currently accepting new enrollments.')
                 cohort_id = request.form.get('cohort_id', '')
                 cohort = None
-                if g.student.kind == 'new' or course.slug.startswith('data-analytics'):
+                if g.student.kind == 'new' or course.slug.startswith(('data-analytics','cybersecurity')):
                     if not cohort_id:
                         raise ValueError('Choose an available start date for your course.')
                     cohort = db.get_or_404(Cohort, int(cohort_id))
@@ -1781,6 +1799,7 @@ def create_app(config=None):
         classes=[item for item in classes if app.extensions['global_experience']['class_visible'](item,g.student)]
         recordings = db.session.scalars(select(Recording).where(Recording.course_id.in_(course_ids), Recording.available_at <= now()).order_by(Recording.available_at.desc())).all()
         assessments = db.session.scalars(select(Assessment).where(Assessment.course_id.in_(course_ids)).order_by(Assessment.id.desc())).all()
+        assessments=[a for a in assessments if a.kind!='lab' or app.extensions['pathways']['assessment_visible'](a)]
         submissions = {s.assessment_id: s for s in db.session.scalars(select(Submission).where(Submission.student_id == g.student.id))}
         allowed_recordings = select(Recording.id).where(Recording.course_id.in_(course_ids))
         notices = db.session.scalars(select(Notification).where(Notification.student_id == g.student.id, Notification.available_at <= now(),
@@ -1904,7 +1923,7 @@ def create_app(config=None):
     @student_required()
     def submit(assessment_id):
         assessment = db.get_or_404(Assessment, assessment_id)
-        if not enrollment_for(assessment.course_id):
+        if not enrollment_for(assessment.course_id) or (assessment.kind=='lab' and not app.extensions['pathways']['assessment_visible'](assessment)):
             abort(403)
         try:
             answer = field('answer', 10000)
@@ -2191,6 +2210,8 @@ def create_app(config=None):
     install_staff_portal(app,db,globals(),dict(admin_required=admin_required))
     from class_reminders import install as install_class_reminders
     app.extensions['class_reminders']=install_class_reminders(app,db,globals())
+    from pathways import install as install_pathways
+    app.extensions['pathways']=install_pathways(app,db,globals(),dict(enrollment_for=enrollment_for,student_required=student_required,notify=notify))
     return app
 
 

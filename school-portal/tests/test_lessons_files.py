@@ -50,7 +50,7 @@ def test_lesson_documents_only_unlock_after_course_payment(app):
     manager,student,course,cohort=setup(app)
     aid=upload(manager,'Workbook.xlsx',b'PK\x03\x04Example spreadsheet bytes')
     create_lesson(manager,course,[aid])
-    with app.app_context(): lesson=db.session.scalar(select(Lesson));lid=lesson.id
+    with app.app_context(): lesson=db.session.scalar(select(Lesson).where(Lesson.course_id==course));lid=lesson.id
     request_enrollment(student,course,cohort)
     assert student.get(f'/lessons/{lid}').status_code==403
     assert student.get(f'/files/{aid}').status_code==403
@@ -169,13 +169,13 @@ def test_lesson_file_cannot_unlock_unpaid_other_course_or_branding_asset(app):
     with app.app_context(): second=db.session.scalar(select(Course).where(Course.slug=='devops')).id
     aid=upload(manager,'Private.pdf',b'%PDF-1.7\nPrivate')
     create_lesson(manager,second,[aid])
-    with app.app_context():lid=db.session.scalar(select(Lesson.id))
+    with app.app_context():lid=db.session.scalar(select(Lesson.id).where(Lesson.course_id==second))
     assert student.get(f'/lessons/{lid}').status_code==403
     assert student.get(f'/files/{aid}').status_code==403
     logo=upload(manager,'Brand.png',png(),'branding')
     result=create_lesson(manager,course,[logo])
     assert b'completed, active lesson files' in result.data
-    with app.app_context(): assert len(list(db.session.scalars(select(Lesson))))==1
+    with app.app_context(): assert len(list(db.session.scalars(select(Lesson).where(Lesson.course_id==second))))==1
 
 
 def test_file_library_rename_and_media_embeds(app):
@@ -185,7 +185,7 @@ def test_file_library_rename_and_media_embeds(app):
     video=upload(manager,'Demo.webm',b'webm video sample')
     audio=upload(manager,'Lecture.mp3',b'mp3 audio sample')
     create_lesson(manager,course,[image,video,audio])
-    with app.app_context():lid=db.session.scalar(select(Lesson.id))
+    with app.app_context():lid=db.session.scalar(select(Lesson.id).where(Lesson.course_id==course))
     page=student.get(f'/lessons/{lid}')
     assert b'<video' in page.data and b'<audio' in page.data and b'lesson-image' in page.data
     token=csrf(manager,'/admin')
