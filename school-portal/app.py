@@ -1188,7 +1188,7 @@ def create_app(config=None):
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
         response.headers.setdefault('Referrer-Policy','strict-origin-when-cross-origin')
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self' https://checkout.stripe.com https://accounts.google.com https://login.microsoftonline.com https://www.facebook.com; frame-ancestors 'none'; base-uri 'self'"
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self' https://checkout.stripe.com https://checkout.flutterwave.com https://checkout.flutterwave.com.ng https://accounts.google.com https://login.microsoftonline.com https://www.facebook.com; frame-ancestors 'none'; base-uri 'self'"
         return response
 
     @app.context_processor

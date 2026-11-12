@@ -23,6 +23,7 @@ New manual receipt uploads and legacy reference-only student submissions return 
 ## Release checks
 
 - Country mapping covers all 60 UN M49 African country/territory codes, plus representative non-African and unknown residences.
+- Browser form-action policy allows the exact validated Stripe and Flutterwave checkout hosts, retaining the existing script and frame protections.
 - Both the local checkout endpoint and legacy invoice checkout endpoints enforce routing on the server. Posted provider/country/amount fields cannot override the saved quote.
 - Ownership, CSRF, email/MFA requirements, verified settlement, exact tender matching, idempotency, and existing access restrictions remain in place.
 - Regression tests seed pre-migration receipts directly to verify their continuing private download and administrator reconciliation; no test-only switch reopens production manual submissions.

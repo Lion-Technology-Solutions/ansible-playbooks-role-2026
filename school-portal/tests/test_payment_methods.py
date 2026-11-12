@@ -92,3 +92,11 @@ def test_completed_enrollment_payment_shows_confirmation_instead_of_unavailable(
     assert b'>Paid</strong>' in page and b'Go to student dashboard' in page
     import re
     assert not re.search(rb'action="/payments/local/[^"]+"',page)
+
+
+def test_browser_policy_allows_both_exact_checkout_hosts_without_wildcards(app):
+    policy=app.test_client().get('/student/login').headers['Content-Security-Policy']
+    form_action=next(item.strip().split()[1:] for item in policy.split(';') if item.strip().startswith('form-action '))
+    assert {"'self'",'https://checkout.stripe.com','https://checkout.flutterwave.com','https://checkout.flutterwave.com.ng'}<=set(form_action)
+    assert not any('*' in host for host in form_action)
+    assert "script-src 'self'" in policy and "frame-ancestors 'none'" in policy
