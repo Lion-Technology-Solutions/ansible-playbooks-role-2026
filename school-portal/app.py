@@ -2111,7 +2111,8 @@ def create_app(config=None):
             return redirect(url_for('admin',view=view) if view in ('dashboard','students','enrollments','payments','programs','classes','materials','announcements','reports','settings') else url_for('admin'))
         view=request.args.get('view','dashboard')
         if view not in ('dashboard','students','enrollments','payments','programs','classes','materials','announcements','reports','settings'):abort(404)
-        return render_template('admin.html', admin_view=view,overview=admin_overview(),prices=db.session.scalars(select(CoursePrice)).all(),
+        directory=app.extensions['students_console']['context']() if view=='students' else None
+        return render_template('admin.html', admin_view=view, directory=directory,overview=directory['overview'] if directory is not None else admin_overview(),prices=db.session.scalars(select(CoursePrice)).all(),
             certificates=db.session.scalars(select(Certificate)).all(),next_dates=next_start_dates(), students=db.session.scalars(select(Student).where(Student.id.in_(select(StudentArchive.student_id)) if request.args.get('archived')=='yes' else ~Student.id.in_(select(StudentArchive.student_id))).order_by(Student.created_at.desc())).all(),
             lessons=db.session.scalars(select(Lesson).order_by(Lesson.course_id,Lesson.position,Lesson.id)).all(),
             lesson_assets=db.session.scalars(select(Asset).where(Asset.ready.is_(True),Asset.archived.is_(False),Asset.purpose=='lesson').order_by(Asset.created_at.desc())).all(),
@@ -2163,6 +2164,8 @@ def create_app(config=None):
     install_analytics(app,db,globals(),dict(admin_required=admin_required,enrollment_for=enrollment_for))
     from profile_sessions import install as install_profile_sessions
     install_profile_sessions(app,db,globals())
+    from students_console import install as install_students_console
+    install_students_console(app,db,globals(),dict(admin_required=admin_required))
     return app
 
 
