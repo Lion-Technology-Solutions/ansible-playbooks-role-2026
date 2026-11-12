@@ -27,24 +27,24 @@ def plan(app,country='Nigeria'):
 def test_first_response_country_currency_no_browser_conversion_required(app):
     client=localized(app)
     for path in ['/','/apply?program=data-analytics','/courses/data-analytics','/register','/terms','/privacy']:
-        page=client.get(path)
+        page=client.get(path,follow_redirects=True)
         assert page.status_code==200
         assert b'USD' not in page.data and b'US$' not in page.data
         if path.startswith('/courses/') or path.startswith('/apply'):assert '₦'.encode() in page.data
-    page=client.get('/courses/data-analytics').data
+    page=client.get('/courses/data-analytics',follow_redirects=True).data
     assert b'95,984' in page and b'59.99' not in page
 
 
 def test_geo_headers_untrusted_outside_vercel_and_unknown_never_falls_back(app):
     client=localized(app);app.config['TRUST_GEO_HEADERS']=False
-    page=client.get('/courses/data-analytics').data
+    page=client.get('/courses/data-analytics',follow_redirects=True).data
     assert b'Choose your country' in page and b'USD' not in page and b'US$' not in page
     assert b'59.99' not in page
 
 
 def test_failed_or_stale_fx_hides_prices_and_checkout(app):
     client=localized(app);app.config['FX_PROVIDER']=lambda:(_ for _ in ()).throw(ValueError('down'))
-    page=client.get('/courses/data-analytics').data
+    page=client.get('/courses/data-analytics',follow_redirects=True).data
     assert b'temporarily unavailable' in page and b'USD' not in page and b'59.99' not in page
     register(client,country='Nigeria');cid,cohort=analytics(app);request_enrollment(client,cid,cohort)
     with app.app_context():eid=db.session.scalar(select(Enrollment.id))
@@ -60,7 +60,7 @@ def test_country_correction_and_browser_timezone_persist_in_profile(app):
         student=db.session.scalar(select(Student));locale=db.session.get(StudentLocale,student.id)
         assert locale.country=='Canada' and locale.currency=='CAD' and locale.timezone=='America/Vancouver' and locale.timezone_manual
         assert db.session.get(StudentPreference,student.id).timezone=='America/Vancouver'
-    page=client.get('/courses/data-analytics').data
+    page=client.get('/courses/data-analytics',follow_redirects=True).data
     assert b'83.99' in page and b'USD' not in page
     assert client.post('/local-preferences',data={'csrf':csrf(client,'/portal'),'timezone':'Invalid/Zone'}).status_code==400
 
