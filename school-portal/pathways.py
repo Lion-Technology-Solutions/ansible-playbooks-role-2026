@@ -10,8 +10,9 @@ from sqlalchemy import select
 from werkzeug.utils import secure_filename
 from cybersecurity_curriculum import STAGES as CYBER, CYBER_SLUGS
 from analytics_curriculum import STAGES as ANALYTICS
+from cloud_curriculum import STAGES as CLOUD, installments as cloud_installments
 
-PROGRAMS={'cybersecurity':('Cybersecurity',CYBER),'data-analytics':('Data Analytics',ANALYTICS)}
+PROGRAMS={'cybersecurity':('Cybersecurity',CYBER),'data-analytics':('Data Analytics',ANALYTICS),'cloud-computing':('Cloud Computing',CLOUD)}
 
 def cyber_starts(today):
     starts=[]
@@ -24,8 +25,10 @@ def cyber_starts(today):
 
 def cyber_payment_stages(stages,start):
     if not start:return [dict(s,due=None,first_class=None) for s in stages]
-    month=start.month%12+1;year=start.year+(start.month==12)
-    dates=[date(start.year,start.month,7),date(year,month,7)]
+    dates=[]
+    for i in range(len(stages)):
+        month=start.month-1+i;year=start.year+month//12;month=month%12+1
+        dates.append(date(year,month,7))
     return [dict(s,due=dates[i].isoformat(),first_class=start.isoformat()) for i,s in enumerate(stages)]
 
 def seed_pathways(connection,m):
@@ -55,6 +58,9 @@ def seed_pathways(connection,m):
             if connection.execute(select(Lab.id).where(Lab.course_id==cid,Lab.number==number)).first():continue
             aid=connection.execute(Assessment.__table__.insert().values(course_id=cid,title=title,kind='lab',instructions='Sample lab: '+title+'.\nUse only the instructor-provided training environment or supplied evidence.\nDocument your procedure, attach screenshots or a report, explain your findings, and recommend improvements.\nYour instructor will customize these instructions and set the lab schedule and submission deadline before publication.').returning(Assessment.id)).scalar_one()
             connection.execute(Lab.__table__.insert().values(course_id=cid,number=number,assessment_id=aid,published=False,revision=0))
+
+    from cloud_curriculum import seed_cloud
+    seed_cloud(connection,m)
 
 def install(app,db,m,h):
     Course,Enrollment,Lesson,Lab,Assessment,Submission=(m[k] for k in ('Course','Enrollment','Lesson','LabExercise','Assessment','Submission'))
@@ -89,7 +95,13 @@ def install(app,db,m,h):
         policy=app.extensions['program_link_plans']['policy'](c);price=db.session.get(m['GlobalTuition'],c.id)
         total=policy.total if policy else price.total if price else None
         currency=policy.currency if policy else price.currency if price else 'USD'
-        return dict(stage,course=c,total=total,currency=currency,selected=saved,eligible=eligible(c))
+        parts=[]
+        if stage['slug'].startswith('cloud-computing') and total is not None:
+            amounts=[Decimal(p['amount']) for p in policy.stages] if policy and len(policy.stages)==3 else cloud_installments(total)
+            offset=Decimal(0)
+            for amount in amounts:
+                parts.append(dict(amount=amount,offset=offset));offset+=amount
+        return dict(stage,course=c,total=total,currency=currency,selected=saved,eligible=eligible(c),monthly_parts=parts)
     @app.get('/programs')
     def program_catalog():
         items=[]
@@ -112,7 +124,7 @@ def install(app,db,m,h):
     @app.get('/programs/<program>/<level>')
     def program_level(program,level):
         name,stages,stage=definition(program,level);data=context(stage);course=data['course']
-        unit=m['CybersecurityUnit'] if program=='cybersecurity' else m['AnalyticsUnit']
+        unit=m[{'cybersecurity':'CybersecurityUnit','cloud-computing':'CloudUnit','data-analytics':'AnalyticsUnit'}[program]]
         units={u.number:u for u in db.session.scalars(select(unit).where(unit.course_id==course.id))}
         lessons=[]
         for index,title in enumerate(stage['titles'],1):
@@ -262,5 +274,5 @@ def install(app,db,m,h):
         return bool(g.student and lab and visible_lab(lab,eligible(a.course)))
     @app.context_processor
     def navigation():
-        return dict(lab_deadline_input=lambda lab:m['aware'](lab.assessment.due_at).astimezone(ZoneInfo(app.extensions['global_experience']['class_detail'](lab.scheduled_class).timezone if lab.scheduled_class else 'America/Toronto')).strftime('%Y-%m-%dT%H:%M') if lab.assessment.due_at else '',pathway_url=lambda c:url_for('program_levels',program='data-analytics' if c.slug.startswith('data-analytics') else 'cybersecurity') if c.slug.startswith(('data-analytics','cybersecurity')) else url_for('course_page',slug=c.slug),can_manage_labs=teacher,lab_visible=lambda a:a.kind!='lab' or assessment_visible(a))
+        return dict(lab_deadline_input=lambda lab:m['aware'](lab.assessment.due_at).astimezone(ZoneInfo(app.extensions['global_experience']['class_detail'](lab.scheduled_class).timezone if lab.scheduled_class else 'America/Toronto')).strftime('%Y-%m-%dT%H:%M') if lab.assessment.due_at else '',pathway_url=lambda c:url_for('program_levels',program='cloud-computing' if c.slug.startswith('cloud-computing') else 'data-analytics' if c.slug.startswith('data-analytics') else 'cybersecurity') if c.slug.startswith(('data-analytics','cybersecurity','cloud-computing')) else url_for('course_page',slug=c.slug),can_manage_labs=teacher,lab_visible=lambda a:a.kind!='lab' or assessment_visible(a))
     return dict(teacher=teacher,visible_lab=visible_lab,labs_for=labs_for,assessment_visible=assessment_visible)

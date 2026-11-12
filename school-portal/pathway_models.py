@@ -8,6 +8,12 @@ def define(db):
         number=db.Column(db.Integer,primary_key=True)
         lesson_id=db.Column(db.Integer,db.ForeignKey('portal_lessons.id'),unique=True,nullable=False)
         lesson=db.relationship('Lesson')
+    class CloudUnit(db.Model):
+        __tablename__='portal_cloud_units'
+        course_id=db.Column(db.Integer,db.ForeignKey('portal_courses.id'),primary_key=True)
+        number=db.Column(db.Integer,primary_key=True)
+        lesson_id=db.Column(db.Integer,db.ForeignKey('portal_lessons.id'),unique=True,nullable=False)
+        lesson=db.relationship('Lesson')
     class LabExercise(db.Model):
         __tablename__='portal_lab_exercises'
         id=db.Column(db.Integer,primary_key=True)
@@ -29,4 +35,4 @@ def define(db):
         pathname=db.Column(db.Text,nullable=False)
         mime=db.Column(db.String(100),nullable=False)
         submission=db.relationship('Submission')
-    return dict(CybersecurityUnit=CybersecurityUnit,LabExercise=LabExercise,LabEvidence=LabEvidence)
+    return dict(CloudUnit=CloudUnit,CybersecurityUnit=CybersecurityUnit,LabExercise=LabExercise,LabEvidence=LabEvidence)
