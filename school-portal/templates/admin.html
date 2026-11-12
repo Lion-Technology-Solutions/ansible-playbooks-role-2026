@@ -1,8 +1,9 @@
 {% extends 'base.html' %}{% from 'macros.html' import token,course_select,external,icon,program_icon with context %}{% block title %}Administration{% endblock %}{% block content %}
-<div class="admin-page-heading"><div><p class="eyebrow">2027 GROWTH · {{ t('Live overview') }}</p><h1>{{ t('Dashboard') if admin_view=='dashboard' else t(admin_view|title) }}</h1></div><span class="account-chip">Administrator</span></div>
-{% if admin_view in ('dashboard','students','payments','reports') %}{% include 'admin_filters.html' %}{% endif %}
+{% if admin_view!='students' %}<div class="admin-page-heading"><div><p class="eyebrow">2027 GROWTH · {{ t('Live overview') }}</p><h1>{{ t('Dashboard') if admin_view=='dashboard' else t(admin_view|title) }}</h1></div><span class="account-chip">Administrator</span></div>
+{% endif %}
+{% if admin_view in ('dashboard','payments','reports') %}{% include 'admin_filters.html' %}{% endif %}
 {% if admin_view=='dashboard' %}{% include 'admin_dashboard.html' %}
-{% elif admin_view=='students' %}{% include 'admin_student_table.html' %}{% include 'admin_students.html' %}{% include 'admin_certificates.html' %}
+{% elif admin_view=='students' %}{% include 'students_console.html' %}
 {% elif admin_view=='enrollments' %}{% include 'enrollment_approvals.html' %}
 {% elif admin_view=='payments' %}{% include 'manual_payments_admin.html' %}{% include 'admin_finance.html' %}
 {% elif admin_view=='programs' %}{% include 'global_pricing_admin.html' %}{% include 'catalog_admin.html' %}{% include 'admin_prices.html' %}{% include 'program_settings.html' %}{% include 'admin_course_links.html' %}
