@@ -50,3 +50,5 @@ The implementation uses the supplied navy/blue/yellow references, local Inter fo
 All schema changes are additive tables, created by the existing PostgreSQL advisory-lock bootstrap; no student records are migrated. Reverting the code leaves additive staff records intact. Do not remove encrypted records or rotate away the integration key during rollback.
 
 Validation: full portal regression suite plus focused staff authorization, invitation, report-version, encryption, OTP, inactivity and delivery-retry tests. Browser QA is currently unverified because the preview browser fails before tab creation with `Storage.setCookies: Invalid cookie fields`. Recheck desktop/mobile layout and a real authorized invitation when browser infrastructure is available.
+
+CI installs dependencies directly from Vercel's `pyproject.toml` manifest, and a regression check keeps local `requirements.txt` synchronized with it. A missing PDF dependency in that deployment manifest caused the initial startup failure; production was rolled back before applying this correction.
