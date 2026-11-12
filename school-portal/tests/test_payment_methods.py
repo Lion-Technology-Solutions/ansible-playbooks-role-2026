@@ -80,3 +80,15 @@ def test_african_unsupported_currency_does_not_fall_back_to_stripe(app):
     import re
     assert not re.search(rb'action="/payments/local/[^"]+"',page)
     with app.app_context():assert not db.session.scalar(select(LocalCheckout.id))
+
+
+def test_completed_enrollment_payment_shows_confirmation_instead_of_unavailable(app):
+    from app import FeeInvoice
+    client,_,_,_,eid,iid,_=setup(app)
+    with app.app_context():
+        app.extensions['global_experience']['settle_fee'](db.session.get(FeeInvoice,iid),'verified-historical-payment')
+        db.session.commit()
+    page=client.get(f'/payments/enrollment/{eid}').data
+    assert b'>Paid</strong>' in page and b'Go to student dashboard' in page
+    import re
+    assert not re.search(rb'action="/payments/local/[^"]+"',page)
