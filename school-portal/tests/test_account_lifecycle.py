@@ -3,7 +3,7 @@ from datetime import timedelta
 from decimal import Decimal
 from PIL import Image
 from sqlalchemy import select,func
-from app import db,Student,StudentControl,Enrollment,AuthMail,AuthChallenge,AdminAccount,AuthProfile,ProfilePicture,LifecycleEvent,BillingSelection,PaymentEntry,now
+from app import db,Student,StudentControl,Enrollment,AuthMail,AuthChallenge,AdminAccount,AuthProfile,ProfilePicture,LifecycleEvent,BillingSelection,PaymentEntry,now,academy_today
 from test_portal import admin,register,csrf,analytics,approve,post
 from test_security import setup,activate,mail,logout,login
 from test_integrations import configure,http_ok
@@ -125,7 +125,7 @@ def test_due_reminders_skip_paid_and_are_idempotent_and_cron_requires_secret(app
     manager,student=app.test_client(),app.test_client();admin(manager);register(student);cid,cohort=analytics(app);eid=approve(app,student,manager,cid,cohort)
     app.config['CRON_SECRET']='unit-cron-secret'
     with app.app_context():
-        db.session.add(BillingSelection(enrollment_id=eid,plan='installments',currency='USD',total=Decimal('300'),installments=3,starts_on=now().date(),checkout_url=''));db.session.commit()
+        db.session.add(BillingSelection(enrollment_id=eid,plan='installments',currency='USD',total=Decimal('300'),installments=3,starts_on=academy_today(),checkout_url=''));db.session.commit()
         assert app.extensions['notifications']['due_reminders']()==1
         assert app.extensions['notifications']['due_reminders']()==0
         db.session.add(PaymentEntry(enrollment_id=eid,reference='DUE-PAID',amount=Decimal('100'),currency='USD'));db.session.commit()
