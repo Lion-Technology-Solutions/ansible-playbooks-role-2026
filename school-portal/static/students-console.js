@@ -12,5 +12,5 @@
   document.querySelector('[data-close-invite]').addEventListener('click',()=>{dialog.close();trigger.focus();});
   document.querySelector('[data-copy-invite]').addEventListener('click',async()=>{const input=document.querySelector('[data-registration-link]'),status=document.querySelector('[data-invite-status]');try{await navigator.clipboard.writeText(input.value);status.textContent='Registration link copied.';}catch{input.focus();input.select();status.textContent='Select and copy the registration link.';}});
   const panel=document.querySelector('[data-student-panel]');
-  if(panel){const heading=panel.querySelector('h2');heading.tabIndex=-1;heading.focus({preventScroll:true});document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!dialog.open&&!document.querySelector('[data-session-warning][open]')&&!event.target.closest('form')){location.assign(panel.querySelector('[aria-label="Close student overview"]').href);}});}
+  if(panel){const heading=panel.querySelector('h2');heading.tabIndex=-1;heading.focus({preventScroll:true});document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!dialog.open&&!document.querySelector('[data-session-warning][open]')&&!event.target.closest('form,[data-profile-menu],details[open]')){location.assign(panel.querySelector('[aria-label="Close student overview"]').href);}});}
 })();
