@@ -13,4 +13,4 @@
 
 {% if e.course.slug.startswith('data-analytics') %}<a href="{{ url_for('analytics_catalog') }}">Explore the Data Analytics pathway →</a>{% endif %}
 
-{% if e.course.slug.startswith(('cybersecurity','data-analytics')) %}<a class="button outline" href="{{ url_for('program_level',program='cybersecurity' if e.course.slug.startswith('cybersecurity') else 'data-analytics',level='intermediate' if e.course.slug.endswith('-intermediate') else 'advanced' if e.course.slug.endswith('-advanced') else 'foundation') }}">Open level classroom →</a>{% endif %}
+{% if e.course.slug.startswith(('cybersecurity','data-analytics','cloud-computing')) %}<a class="button outline" href="{{ url_for('program_level',program='cloud-computing' if e.course.slug.startswith('cloud-computing') else 'cybersecurity' if e.course.slug.startswith('cybersecurity') else 'data-analytics',level='intermediate' if e.course.slug.endswith('-intermediate') else 'advanced' if e.course.slug.endswith('-advanced') else 'foundation') }}">Open level classroom →</a>{% endif %}
