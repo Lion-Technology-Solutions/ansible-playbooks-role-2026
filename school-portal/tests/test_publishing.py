@@ -90,7 +90,10 @@ def test_unpublishing_preserves_current_students_access(app):
     post(manager,'/admin',action='edit_course',course_id=course,name='Data Analytics',description='Practical analytics',
          skills='Excel · SQL',publication_state='draft')
     assert visitor.get('/courses/data-analytics').status_code==404
-    assert b'Data Analytics' not in visitor.get('/').data
+    catalogue=visitor.get('/').data
+    assert b'href="/courses/data-analytics"' not in catalogue
+    assert b'href="/courses/data-analytics-intermediate"' in catalogue
+    assert b'href="/courses/data-analytics-advanced"' in catalogue
     page=student.get('/portal')
     assert page.status_code==200 and b'Register for live class' in page.data
     assert 'yBAAj2k5TM2lEqpMXZY3ZQ' in student.get(f'/course/{course}/register').location
@@ -113,6 +116,8 @@ def test_event_draft_scheduling_publication_and_unpublication(app,monkeypatch):
     future=now()+timedelta(days=1)
     post(manager,'/admin',**update_fields(action='edit_update',update_id=event_id,publication_state='published',publish_at=future.strftime('%Y-%m-%dT%H:%M')))
     assert visitor.get('/updates/linux-career-workshop').status_code==404
+    # Advancing publication time must not also age the administrator session.
+    app.config['SESSION_CLOCK']=now
     monkeypatch.setattr(portal_module,'now',lambda:future+timedelta(minutes=1))
     page=visitor.get('/updates/linux-career-workshop')
     assert page.status_code==200 and b'Online via Zoom' in page.data

@@ -233,6 +233,25 @@ class AuthSession(db.Model):
     next_enrollment_id=db.Column(db.Integer,db.ForeignKey('portal_enrollments.id'))
 
 
+class PortalSessionActivity(db.Model):
+    __tablename__='portal_session_activity'
+    digest=db.Column(db.String(64),primary_key=True)
+    actor=db.Column(db.String(70),nullable=False)
+    channel=db.Column(db.String(24),nullable=False)
+    last_active_at=db.Column(db.DateTime(timezone=True),nullable=False)
+    absolute_expires_at=db.Column(db.DateTime(timezone=True),nullable=False)
+    revoked=db.Column(db.Boolean,nullable=False,default=False)
+
+
+class RolePreviewAudit(db.Model):
+    __tablename__='portal_role_preview_audit'
+    id=db.Column(db.Integer,primary_key=True)
+    session_digest=db.Column(db.String(64),db.ForeignKey('portal_session_activity.digest'),nullable=False)
+    previous_role=db.Column(db.String(20),nullable=False)
+    target_role=db.Column(db.String(20),nullable=False)
+    created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
+
+
 class AuthChallenge(db.Model):
     __tablename__='portal_auth_challenges'
     id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
@@ -1119,6 +1138,9 @@ def create_app(config=None):
             admin_token = app.extensions['admin_security']['stamp']()
             if not hmac.compare_digest(admin_token.encode(), session.get('admin_auth', '').encode()):
                 session.clear()
+        if request.endpoint not in ('static','health','stripe_webhook','flutterwave_webhook','chatgpt_context','chatgpt_draft','chatgpt_apply'):
+            result=app.extensions['profile_sessions']['guard']()
+            if result is not None:return result
         if request.method == 'POST' and request.endpoint not in ('stripe_webhook','flutterwave_webhook','chatgpt_context','chatgpt_draft','chatgpt_apply'):
             if request.endpoint in ('student_profile','admin_profile'):
                 request.max_content_length=2*1024*1024+16384
@@ -1156,7 +1178,7 @@ def create_app(config=None):
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','devops_catalog','analytics_catalog','devops_workspace','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','devops_catalog','analytics_catalog','role_switcher','role_preview','devops_workspace','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
 
     def student_required():
         def decorate(fn):
@@ -1669,7 +1691,7 @@ def create_app(config=None):
 
     @app.post('/logout')
     def logout():
-        session.clear()
+        app.extensions['profile_sessions']['end']()
         return redirect(url_for('home'))
 
     @app.route('/enrollments', methods=['GET', 'POST'])
@@ -2139,6 +2161,8 @@ def create_app(config=None):
     install_devops(app,db,globals(),dict(admin_required=admin_required,student_required=student_required,enrollment_for=enrollment_for))
     from analytics_portal import install as install_analytics
     install_analytics(app,db,globals(),dict(admin_required=admin_required,enrollment_for=enrollment_for))
+    from profile_sessions import install as install_profile_sessions
+    install_profile_sessions(app,db,globals())
     return app
 
 
