@@ -95,6 +95,9 @@ def install(app,db,m,h):
         if not eligible(enrollment):return None
         source=policy(enrollment.course)
         stages=dated_stages(source.stages,enrollment.cohort.start_date if enrollment.cohort else None,m['aware'](enrollment.created_at).astimezone(ZoneInfo('America/Toronto')).date()) if uses_default_stages(source.stages) else source.stages
+        if enrollment.course.slug=='devops':
+            from devops_pathway import payment_dates
+            stages=payment_dates(source.stages,enrollment.cohort.start_date if enrollment.cohort else None,m['aware'](enrollment.created_at).astimezone(ZoneInfo('America/Toronto')).date())
         if enrollment.course.slug.startswith(('cybersecurity','cloud-computing')):
             from pathways import cyber_payment_stages
             stages=cyber_payment_stages(source.stages,enrollment.cohort.start_date if enrollment.cohort else None)
@@ -211,6 +214,9 @@ def install(app,db,m,h):
         start=cohort.start_date if cohort and cohort.course_id==course_id else None
         source=db.session.get(Policy,course_id)
         if not source:return []
+        if db.session.get(m['Course'],course_id).slug=='devops':
+            from devops_pathway import payment_dates
+            return [dict(part,due=date.fromisoformat(part['due']) if part.get('due') else None,first_class=start) for part in payment_dates(source.stages,start,m['academy_today']())]
         if db.session.get(m['Course'],course_id).slug.startswith(('cybersecurity','cloud-computing')):
             from pathways import cyber_payment_stages
             parts=cyber_payment_stages(source.stages,start)

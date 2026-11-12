@@ -1301,7 +1301,7 @@ def create_app(config=None):
         if g.student:
             enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==g.student.id,Enrollment.course_id==course.id))
             if not enrollment:
-                enrollment=Enrollment(student_id=g.student.id,course_id=course.id,cohort_id=cohort.id if g.student.kind=='new' or course.slug.startswith(('data-analytics','cybersecurity','cloud-computing')) else None)
+                enrollment=Enrollment(student_id=g.student.id,course_id=course.id,cohort_id=cohort.id if g.student.kind=='new' or course.slug.startswith(('data-analytics','cybersecurity','cloud-computing','devops')) else None)
                 db.session.add(enrollment);db.session.commit()
             return redirect(url_for('global_payment',enrollment_id=enrollment.id))
         session['application']={'course_id':course.id,'cohort_id':cohort.id}
@@ -1596,8 +1596,8 @@ def create_app(config=None):
         course = db.session.scalar(published_courses().where(Course.slug == slug))
         if not course:
             abort(404)
-        if course.slug.startswith(('cybersecurity','data-analytics','cloud-computing')):
-            program='cloud-computing' if course.slug.startswith('cloud-computing') else 'cybersecurity' if course.slug.startswith('cybersecurity') else 'data-analytics'
+        if course.slug.startswith(('cybersecurity','data-analytics','cloud-computing','devops')):
+            program='devops' if course.slug=='devops' else 'cloud-computing' if course.slug.startswith('cloud-computing') else 'cybersecurity' if course.slug.startswith('cybersecurity') else 'data-analytics'
             level='intermediate' if course.slug.endswith('-intermediate') else 'advanced' if course.slug.endswith('-advanced') else None
             return redirect(url_for('program_level',program=program,level=level) if level else url_for('program_levels',program=program))
         return render_template('course_page.html', course=course, cohorts=upcoming_cohorts(), preview=False)
@@ -1674,7 +1674,7 @@ def create_app(config=None):
                 db.session.add(StudentPreference(student_id=student.id,language=language,timezone=app.extensions['local_experience']['browser_zone']() or residence(country)['timezone']))
                 enrollment=None
                 if chosen_course:
-                    enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' or chosen_course.slug.startswith(('data-analytics','cybersecurity','cloud-computing')) else None)
+                    enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' or chosen_course.slug.startswith(('data-analytics','cybersecurity','cloud-computing','devops')) else None)
                     db.session.add(enrollment)
                 db.session.commit()
                 flash(f'Your student number is {student.student_number}. Email verification activates your account; verified payment activates enrollment.')
@@ -1744,7 +1744,7 @@ def create_app(config=None):
                     raise ValueError('This course is not currently accepting new enrollments.')
                 cohort_id = request.form.get('cohort_id', '')
                 cohort = None
-                if g.student.kind == 'new' or course.slug.startswith(('data-analytics','cybersecurity','cloud-computing')):
+                if g.student.kind == 'new' or course.slug.startswith(('data-analytics','cybersecurity','cloud-computing','devops')):
                     if not cohort_id:
                         raise ValueError('Choose an available start date for your course.')
                     cohort = db.get_or_404(Cohort, int(cohort_id))

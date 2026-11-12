@@ -12,7 +12,9 @@ from cybersecurity_curriculum import STAGES as CYBER, CYBER_SLUGS
 from analytics_curriculum import STAGES as ANALYTICS
 from cloud_curriculum import STAGES as CLOUD, installments as cloud_installments
 
-PROGRAMS={'cybersecurity':('Cybersecurity',CYBER),'data-analytics':('Data Analytics',ANALYTICS),'cloud-computing':('Cloud Computing',CLOUD)}
+from devops_pathway import STAGES as DEVOPS, MONTHLY as DEVOPS_MONTHLY
+
+PROGRAMS={'devops':('DevOps',DEVOPS),'cybersecurity':('Cybersecurity',CYBER),'data-analytics':('Data Analytics',ANALYTICS),'cloud-computing':('Cloud Computing',CLOUD)}
 
 def cyber_starts(today):
     starts=[]
@@ -61,6 +63,8 @@ def seed_pathways(connection,m):
 
     from cloud_curriculum import seed_cloud
     seed_cloud(connection,m)
+    from devops_pathway import seed_devops
+    seed_devops(connection,m)
 
 def install(app,db,m,h):
     Course,Enrollment,Lesson,Lab,Assessment,Submission=(m[k] for k in ('Course','Enrollment','Lesson','LabExercise','Assessment','Submission'))
@@ -101,7 +105,7 @@ def install(app,db,m,h):
             offset=Decimal(0)
             for amount in amounts:
                 parts.append(dict(amount=amount,offset=offset));offset+=amount
-        return dict(stage,course=c,total=total,currency=currency,selected=saved,eligible=eligible(c),monthly_parts=parts)
+        return dict(stage,course=c,total=total,currency=currency,selected=saved,eligible=eligible(c),monthly_parts=parts,monthly=DEVOPS_MONTHLY if c.slug=='devops' else None)
     @app.get('/programs')
     def program_catalog():
         items=[]
@@ -124,14 +128,14 @@ def install(app,db,m,h):
     @app.get('/programs/<program>/<level>')
     def program_level(program,level):
         name,stages,stage=definition(program,level);data=context(stage);course=data['course']
-        unit=m[{'cybersecurity':'CybersecurityUnit','cloud-computing':'CloudUnit','data-analytics':'AnalyticsUnit'}[program]]
+        unit=m[{'cybersecurity':'CybersecurityUnit','cloud-computing':'CloudUnit','data-analytics':'AnalyticsUnit','devops':'DevOpsUnit'}[program]]
         units={u.number:u for u in db.session.scalars(select(unit).where(unit.course_id==course.id))}
         lessons=[]
         for index,title in enumerate(stage['titles'],1):
             number=stage.get('offset',0)+index;u=units.get(number)
             lesson=u.lesson if u else None
             sessions=app.extensions['devops']['lesson_context'](lesson,teacher())['lesson_classes'] if lesson and (data['eligible'] or teacher()) else []
-            lessons.append(dict(number=number,week=index,title=title,lesson=lesson,sessions=sessions,released=bool(lesson and lesson.published and m['aware'](lesson.available_at)<=m['now']())))
+            lessons.append(dict(number=number,week=(index+1)//2 if program=='devops' else index,title=title,lesson=lesson,sessions=sessions,released=bool(lesson and lesson.published and m['aware'](lesson.available_at)<=m['now']())))
         tab=request.args.get('tab','lessons')
         if tab not in ('lessons','resources','labs'):abort(404)
         if tab!='lessons' and not data['eligible'] and not teacher():abort(403)
@@ -147,7 +151,7 @@ def install(app,db,m,h):
                 cohort=db.get_or_404(m['Cohort'],int(request.form.get('cohort_id','0')))
                 if cohort.course_id!=course.id or cohort.start_date not in m['available_start_dates'](course):raise ValueError('Choose a valid upcoming intake.')
                 choice=request.form.get('plan','installments')
-                if choice not in ('full','installments'):raise ValueError('Choose a payment option.')
+                if choice not in (('installments',) if program=='devops' else ('full','installments')):raise ValueError('Choose a payment option.')
                 session['level_payment_choice']={'course_id':course.id,'plan':choice}
                 session['application']={'course_id':course.id,'cohort_id':cohort.id}
                 if not g.student:return redirect(url_for('register'))
@@ -274,5 +278,5 @@ def install(app,db,m,h):
         return bool(g.student and lab and visible_lab(lab,eligible(a.course)))
     @app.context_processor
     def navigation():
-        return dict(lab_deadline_input=lambda lab:m['aware'](lab.assessment.due_at).astimezone(ZoneInfo(app.extensions['global_experience']['class_detail'](lab.scheduled_class).timezone if lab.scheduled_class else 'America/Toronto')).strftime('%Y-%m-%dT%H:%M') if lab.assessment.due_at else '',pathway_url=lambda c:url_for('program_levels',program='cloud-computing' if c.slug.startswith('cloud-computing') else 'data-analytics' if c.slug.startswith('data-analytics') else 'cybersecurity') if c.slug.startswith(('data-analytics','cybersecurity','cloud-computing')) else url_for('course_page',slug=c.slug),can_manage_labs=teacher,lab_visible=lambda a:a.kind!='lab' or assessment_visible(a))
+        return dict(lab_deadline_input=lambda lab:m['aware'](lab.assessment.due_at).astimezone(ZoneInfo(app.extensions['global_experience']['class_detail'](lab.scheduled_class).timezone if lab.scheduled_class else 'America/Toronto')).strftime('%Y-%m-%dT%H:%M') if lab.assessment.due_at else '',pathway_url=lambda c:url_for('program_levels',program='devops' if c.slug=='devops' else 'cloud-computing' if c.slug.startswith('cloud-computing') else 'data-analytics' if c.slug.startswith('data-analytics') else 'cybersecurity') if c.slug.startswith(('data-analytics','cybersecurity','cloud-computing','devops')) else url_for('course_page',slug=c.slug),can_manage_labs=teacher,lab_visible=lambda a:a.kind!='lab' or assessment_visible(a))
     return dict(teacher=teacher,visible_lab=visible_lab,labs_for=labs_for,assessment_visible=assessment_visible)
