@@ -65,6 +65,7 @@ def test_invite_resend_revoke_expiry_and_staff_login_require_verification(app):
     assert first!=second and app.test_client().get('/staff/invitations/'+first).status_code==410
     post(manager,f'/admin/team/{sid}/manage',page='/admin/team',action='revoke',admin_password='test-admin-password')
     assert app.test_client().get('/staff/invitations/'+second).status_code==410
+    assert b'Revoked' in manager.get('/admin/team').data
     with app.app_context():
         pending=db.session.get(StaffMember,sid);pending.password_hash=generate_password_hash(PASSWORD);db.session.commit()
     client=app.test_client();result=post(client,'/staff/sign-in',page='/staff/sign-in',identity='pending@example.test',password=PASSWORD)
@@ -147,7 +148,10 @@ def test_documents_private_permissions_and_no_admin_automatic_access(app):
     assert hr.get('/staff/documents/'+identity).data.endswith(b'private ID')
     for client in (manager,pay,other,app.test_client()):assert client.get('/staff/documents/'+identity).status_code==403
     with hr.session_transaction() as state:state['staff_stepup_until']=0
-    assert hr.get('/staff/documents/'+identity).status_code==403
+    locked=hr.get('/staff/documents/'+identity);assert locked.status_code==403 and b'Verify for restricted access' in locked.data
+    assert post(hr,'/staff/secure-access',password=PASSWORD,return_to='/staff/documents/'+identity).status_code==200
+    code=re.search(r'code is (\d{6})',sent[-1]['body'])[1]
+    assert post(hr,'/staff/verify',page='/staff/verify',code=code).data.endswith(b'private ID')
 
 
 def test_mail_failure_keeps_report_and_retry_is_authorized(app):

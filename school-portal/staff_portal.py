@@ -44,7 +44,7 @@ def install(app,db,m,h):
         supervisor=db.session.get(Member,member.supervisor_id) if member.supervisor_id else None
         return supervisor.name if supervisor else 'Portal administrator'
     def stepup():
-        if session.get('staff_stepup_until',0)<now().timestamp():abort(403,'Verify your identity again using Secure access before opening payroll or identity information.')
+        if session.get('staff_stepup_until',0)<now().timestamp():abort(Response(render_template('staff_locked.html'),status=403))
     def mail(member,kind,key,to,subject,body,**extra):
         existing=db.session.scalar(select(Mail).where(Mail.event_key==key))
         if existing:return existing
@@ -144,7 +144,7 @@ def install(app,db,m,h):
             if purpose=='reset':member.password_hash=password();member.revision+=1;audit('password_reset',member);db.session.commit();session.clear();flash('Password updated. Previous sessions have ended. Sign in again.');return redirect(url_for('staff_login'))
             if purpose=='stepup':
                 if session.get('staff_id')!=member.id:abort(403)
-                db.session.commit();session['staff_stepup_until']=(now()+timedelta(minutes=5)).timestamp();return redirect(url_for('staff_profile',tab='payroll'))
+                db.session.commit();session['staff_stepup_until']=(now()+timedelta(minutes=5)).timestamp();return redirect(session.pop('staff_secure_return',url_for('staff_profile',tab='payroll')))
             db.session.commit();start_session(member);return redirect(url_for('staff_home'))
         return render_template('staff_auth.html',mode='verify',purpose=purpose)
     @app.route('/staff/recover',methods=['GET','POST'])
@@ -160,7 +160,12 @@ def install(app,db,m,h):
     def staff_secure_access():
         limit('staff-stepup:'+str(g.staff.id),5,15)
         if not check_password_hash(g.staff.password_hash,request.form.get('password','')[:129]):abort(403,'Confirm your current staff password.')
+        destination=request.form.get('return_to','')
+        session['staff_secure_return']=destination if destination.startswith('/staff/') and '\\' not in destination and not any(c in destination for c in ('\r','\n')) else url_for('staff_profile',tab='payroll')
         issue_code(g.staff,'stepup','stepup');session['staff_verification_mode']='stepup';return redirect(url_for('staff_verify'))
+    def invitation_status(member):
+        inv=db.session.scalar(select(Invite).where(Invite.member_id==member.id).order_by(Invite.created_at.desc()))
+        return 'Revoked' if inv and inv.revoked else 'Expired' if inv and aware(inv.expires_at)<=now() else 'Invited' if inv and not inv.used else 'Not invited'
     def team_members():return list(db.session.scalars(select(Member).order_by(Member.name)))
     def validate_assignment(member):
         role=request.form.get('role','staff');scope=request.form.get('scope','assigned');sup=request.form.get('supervisor_id','')
@@ -181,7 +186,7 @@ def install(app,db,m,h):
             if db.session.scalar(select(Member.id).where(Member.email==email)):abort(409,'This work email already has a staff record. Resend its invitation or manage the existing account.')
             member=Member(email=email,name=name,department=department);db.session.add(member);db.session.flush();validate_assignment(member);identity=create_invitation(member);audit('staff_invited',member,'Role: '+member.role+'; scope: '+member.scope);db.session.commit();dispatch([identity]);flash('Invitation saved. Check email delivery status below.');return redirect(url_for('staff_team'))
         members=team_members();q=request.args.get('q','').casefold();dept=request.args.get('department','');visible=[s for s in members if (not q or q in (s.name+' '+s.email+' '+s.department+' '+ROLES[s.role]).casefold()) and (not dept or s.department==dept)]
-        return render_template('staff_team.html',admin_view='team',members=visible,all_members=members,invites=list(db.session.scalars(select(Invite).order_by(Invite.created_at.desc()))),mail_rows=list(db.session.scalars(select(Mail).where(Mail.kind=='invitation').order_by(Mail.created_at.desc()).limit(30))),audit_rows=list(db.session.scalars(select(Audit).order_by(Audit.created_at.desc()).limit(40))),stats=dict(active=sum(s.active for s in members),pending=sum(not s.verified_at for s in members),review=db.session.scalar(select(db.func.count()).select_from(Report).where(Report.status=='submitted'))))
+        return render_template('staff_team.html',admin_view='team',members=visible,all_members=members,invites=list(db.session.scalars(select(Invite).order_by(Invite.created_at.desc()))),mail_rows=list(db.session.scalars(select(Mail).where(Mail.kind=='invitation').order_by(Mail.created_at.desc()).limit(30))),audit_rows=list(db.session.scalars(select(Audit).order_by(Audit.created_at.desc()).limit(40))),stats=dict(active=sum(s.active for s in members),pending=sum(not s.verified_at and invitation_status(s)=='Invited' for s in members),review=db.session.scalar(select(db.func.count()).select_from(Report).where(Report.status=='submitted'))))
     @app.post('/admin/team/<int:member_id>/manage')
     @h['admin_required']
     def staff_manage(member_id):
@@ -388,7 +393,7 @@ def install(app,db,m,h):
     def drain():
         identities=list(db.session.scalars(select(Mail.id).where(Mail.status.in_(('pending','failed')),Mail.attempts<5).order_by(Mail.created_at).limit(30)));dispatch(identities);return len(identities)
     @app.context_processor
-    def context():return dict(staff_roles=ROLES,staff_scopes=SCOPES,staff_doc_types=DOCS,staff_fields=FIELDS,staff_member=lambda identity:db.session.get(Member,identity),staff_supervisor=supervisor_name,staff_can=can,staff_assigned=lambda reviewer,member:db.session.get(Grant,(reviewer,member)) is not None,staff_secure=bool(getattr(g,'staff',None) and session.get('staff_stepup_until',0)>=now().timestamp()))
+    def context():return dict(staff_roles=ROLES,staff_invitation_status=invitation_status,staff_scopes=SCOPES,staff_doc_types=DOCS,staff_fields=FIELDS,staff_member=lambda identity:db.session.get(Member,identity),staff_supervisor=supervisor_name,staff_can=can,staff_assigned=lambda reviewer,member:db.session.get(Grant,(reviewer,member)) is not None,staff_secure=bool(getattr(g,'staff',None) and session.get('staff_stepup_until',0)>=now().timestamp()))
     @app.after_request
     def headers(response):
         if request.path.startswith(('/staff','/admin/team')):response.headers['Referrer-Policy']='no-referrer';response.headers['Cache-Control']='no-store'
