@@ -216,3 +216,34 @@ def test_flutterwave_local_checkout_verifies_exact_tender_before_credit(app,monk
     with app.app_context():
         assert db.session.get(LocalPaymentQuote,qid).credited
         assert list(db.session.scalars(select(PaymentEntry.amount)))==[Decimal('10.00')]
+
+
+@pytest.mark.parametrize('sandbox',[False,True])
+def test_flutterwave_webhook_processes_local_quotes_without_browser_return(app,monkeypatch,sandbox):
+    monkeypatch.setenv('FLW_SECRET_KEY','FLWSECK_TEST-unit' if sandbox else 'FLWSECK-unit-live')
+    monkeypatch.setenv('FLW_WEBHOOK_SECRET','unit-local-webhook-secret')
+    client,eid,page=plan(app);actual={};lookups=[]
+    def transport(url,method='GET',payload=None,headers=None):
+        if method=='POST':
+            actual.update(id=54321,tx_ref=payload['tx_ref'],amount=payload['amount'],currency=payload['currency'],status='successful')
+            return {'status':'success','data':{'link':'https://checkout.flutterwave.com/v3/hosted/pay/webhook'}}
+        lookups.append(url)
+        return {'status':'success','data':dict(actual)}
+    app.config['FLUTTERWAVE_HTTP']=transport
+    with app.app_context():qid=db.session.scalar(select(LocalPaymentQuote.id))
+    assert client.post('/payments/local/'+qid+'/flutterwave',data={'csrf':csrf(client,'/portal')}).status_code==303
+    assert actual['tx_ref'].startswith('LTL-')
+    event={'event':'charge.completed','data':{'tx_ref':actual['tx_ref'],'id':54321,'amount':'9999999','currency':'USD'}}
+    receiver=app.test_client()
+    assert receiver.post('/webhooks/flutterwave',json=event,headers={'verif-hash':'wrong'}).status_code==401
+    assert not lookups
+    actual['amount']='1'
+    assert receiver.post('/webhooks/flutterwave',json=event,headers={'verif-hash':'unit-local-webhook-secret'}).status_code==400
+    with app.app_context():assert not db.session.get(LocalPaymentQuote,qid).credited
+    actual['amount']='16000'
+    for _ in range(2):assert receiver.post('/webhooks/flutterwave',json=event,headers={'verif-hash':'unit-local-webhook-secret'}).status_code==200
+    with app.app_context():
+        row=db.session.scalar(select(LocalCheckout));assert row.paid and row.test_mode==sandbox
+        assert db.session.get(LocalPaymentQuote,qid).credited is (not sandbox)
+        assert len(list(db.session.scalars(select(PaymentEntry.id))))==(0 if sandbox else 1)
+        assert (db.session.get(Enrollment,eid).status=='approved') is (not sandbox)

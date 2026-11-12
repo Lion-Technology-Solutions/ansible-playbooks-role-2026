@@ -114,7 +114,7 @@ def install(app,db,m,h):
         payment=data.get('data')
         if not isinstance(payment,dict):abort(400)
         reference=payment.get('tx_ref','')
-        if not isinstance(reference,str) or not re.fullmatch(r'LT-[0-9a-f]{48}',reference):return '',200
+        if not isinstance(reference,str) or not re.fullmatch(r'LTL?-[0-9a-f]{48}',reference):return '',200
         local_result=app.extensions['local_payments']['webhook']('flutterwave',str((data.get('data') or {}).get('tx_ref','')),(data.get('data') or {}).get('id')) if 'local_payments' in app.extensions else None
         if local_result is not None:return local_result
         record=db.session.scalar(select(Checkout).where(Checkout.reference==reference).with_for_update().execution_options(populate_existing=True))
