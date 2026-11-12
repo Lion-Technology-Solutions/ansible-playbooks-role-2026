@@ -28,3 +28,11 @@ New tables: CybersecurityUnit, CloudUnit, LabExercise, LabEvidence. Cold-start i
 ## Validation
 
 `pytest -q tests/test_pathways.py` covers public discovery, localized pricing, last-Monday intakes, payment snapshots, draft and level/cohort access controls, scheduling delivery records, private evidence, grading, instructor authorization and idempotent bootstrap. Existing analytics/payment/upload/session tests provide regression coverage.
+
+## DevOps monthly pathway
+
+One DevOps course and enrollment cover Foundation, Intermediate and Advanced: 8 weeks and 16 lessons per level, 24 weeks / 48 lessons overall. Existing lesson identities and materials are retained; administrators use the existing lesson workspace to publish content and Saturday/Sunday class schedules. No clock times are assumed.
+
+New eligible enrollments use a six-month USD 2,394 tuition plan: USD 99 immediately (credited toward month one), USD 300 seven days after the chosen first class, then five USD 399 payments on the 1st. The first recurring payment is the first 1st strictly after the balance deadline, including year rollover. All displayed amounts use the existing localized, secured checkout. This is a fixed tuition schedule, not an automatically renewing subscription. Existing enrollment snapshots, verified/legacy billing selections, receipts and transactions are not rewritten. Moving between levels reuses the same enrollment.
+
+`tests/test_devops_pathway.py` verifies the 48-lesson split, localized offer, shared enrollment, initial invoice, preserved snapshots, and chronological deadlines across month/year boundaries.

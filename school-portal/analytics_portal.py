@@ -104,5 +104,5 @@ def install(app, db, m, h):
     @app.context_processor
     def navigation():
         return dict(
-            curriculum_url=lambda course: url_for('analytics_catalog') if course.slug in ANALYTICS_SLUGS else url_for('program_levels',program='cloud-computing') if course.slug.startswith('cloud-computing') else url_for('program_levels',program='cybersecurity') if course.slug.startswith('cybersecurity') else url_for('devops_catalog'),
+            curriculum_url=lambda course: url_for('analytics_catalog') if course.slug in ANALYTICS_SLUGS else url_for('program_levels',program='cloud-computing') if course.slug.startswith('cloud-computing') else url_for('program_levels',program='cybersecurity') if course.slug.startswith('cybersecurity') else url_for('program_levels',program='devops'),
             curriculum_label=lambda course: 'Data Analytics curriculum' if course.slug in ANALYTICS_SLUGS else 'Cloud Computing curriculum' if course.slug.startswith('cloud-computing') else 'Cybersecurity curriculum' if course.slug.startswith('cybersecurity') else 'DevOps curriculum')

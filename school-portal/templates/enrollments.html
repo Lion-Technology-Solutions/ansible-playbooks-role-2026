@@ -28,7 +28,7 @@
 {% for c in courses if c.slug not in ('data-analytics-intermediate','data-analytics-advanced','cybersecurity-intermediate','cybersecurity-advanced','cloud-computing-intermediate','cloud-computing-advanced') %}
 <article class="panel" id="course-{{ c.id }}">
   <p class="pill">LIVE · ONLINE</p><h3>{{ c.name }}</h3>
-  {% if c.slug in ('data-analytics','cybersecurity','cloud-computing') %}<p>{{ c.description }}</p><p>Foundation · Intermediate · Advanced</p><a class="button blue" href="{{ pathway_url(c) }}">Choose your level →</a>{% else %}
+  {% if c.slug in ('data-analytics','cybersecurity','cloud-computing','devops') %}<p>{{ c.description }}</p><p>Foundation · Intermediate · Advanced</p><a class="button blue" href="{{ pathway_url(c) }}">Choose your level →</a>{% else %}
   {{ program_details(c, g.student.country, cohorts) }}
   {% if c.id in requested_ids %}<span class="status success">Enrollment already requested</span>
   {% else %}
