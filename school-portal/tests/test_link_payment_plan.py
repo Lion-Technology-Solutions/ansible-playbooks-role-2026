@@ -37,7 +37,7 @@ def test_exact_plan_is_published_and_no_extra_enrollment_fee(app):
     student,manager,eid=setup_plan(app)
     with app.app_context():
         plan=db.session.get(EnrollmentPaymentSchedule,eid)
-        assert plan.total==Decimal('59.97') and [p['amount'] for p in plan.stages]==['10.00','9.99','19.99','19.99']
+        assert plan.total==Decimal('59.99') and [p['amount'] for p in plan.stages]==['10.00','9.99','19.99','20.01']
         assert all(part['due'] for part in plan.stages)
         assert date.fromisoformat(plan.stages[1]['due'])==date.fromisoformat(plan.stages[0]['first_class'])+timedelta(days=7)
         from app import academy_today
@@ -45,14 +45,14 @@ def test_exact_plan_is_published_and_no_extra_enrollment_fee(app):
         assert db.session.scalar(select(FeeInvoice)).amount_usd==Decimal('10.00')
         assert not db.session.get(BillingSelection,eid)
     page=app.test_client().get('/courses/data-analytics').data
-    assert b'USD' not in page and b'59.97' not in page and b'monthly payments available' not in page
+    assert b'USD' not in page and b'59.99' not in page and b'monthly payments available' not in page
     page=student.get('/payments/plans/'+str(eid)).data
     assert b'https://flutterwave.com/pay/liontechpaymentplan' not in page and b'local_quote_id' in page
 
 
 def test_initial_payment_grants_access_and_full_plan_is_credited_once(app):
     student,manager,eid=setup_plan(app)
-    for index,amount in enumerate(['10.00','9.99','19.99','19.99']):
+    for index,amount in enumerate(['10.00','9.99','19.99','20.01']):
         assert submit(student,eid,'FLW-PLAN-'+str(index)).status_code==200
         with app.app_context():
             proof=db.session.scalar(select(PlanPaymentProof).where(PlanPaymentProof.status=='submitted'))
@@ -65,8 +65,8 @@ def test_initial_payment_grants_access_and_full_plan_is_credited_once(app):
             enrollment=db.session.get(Enrollment,eid)
             assert enrollment.status=='approved' and enrollment.payment_status=='verified'
             state=app.extensions['program_link_plans']['billing'](enrollment)
-            assert state['collected']==sum(map(Decimal,['10.00','9.99','19.99','19.99'][:index+1]))
-            assert state['remaining']==Decimal('59.97')-state['collected']
+            assert state['collected']==sum(map(Decimal,['10.00','9.99','19.99','20.01'][:index+1]))
+            assert state['remaining']==Decimal('59.99')-state['collected']
             if index==0:assert state['next']['amount']==Decimal('9.99') and state['next']['due']==enrollment.cohort.start_date+timedelta(days=7)
     with app.app_context():
         assert len(db.session.scalars(select(PaymentEntry)).all())==4
@@ -125,10 +125,10 @@ def test_deposit_is_not_double_counted_in_forecast_and_access_current_before_due
     def capture(sender,template,context,**extra):
         if 'overview' in context:seen.append(context['overview'])
     with template_rendered.connected_to(capture,app):manager.get('/admin?currency=USD')
-    assert seen[-1]['outstanding']==Decimal('59.97')
+    assert seen[-1]['outstanding']==Decimal('59.99')
     submit(student,eid,'FORECAST-10');review(app,manager,eid)
     with template_rendered.connected_to(capture,app):manager.get('/admin?currency=USD')
-    assert seen[-1]['outstanding']==Decimal('49.97') and seen[-1]['collected']==Decimal('10.00')
+    assert seen[-1]['outstanding']==Decimal('49.99') and seen[-1]['collected']==Decimal('10.00')
     with app.app_context():
         app.extensions['student_management']['sweep']()
         assert db.session.get(Enrollment,eid).status=='approved'
@@ -167,7 +167,7 @@ def test_existing_link_plan_dates_backfill_once_without_repricing_or_drifting(ap
         assert [p['due'] for p in plan.stages]==['2027-01-14','2027-01-21','2027-02-21','2027-03-21']
         enrollment=db.session.get(Enrollment,eid);enrollment.cohort.start_date=date(2030,5,1);db.session.commit()
         state=app.extensions['program_link_plans']['billing'](enrollment)
-        assert state['next']['due']==date(2027,1,14) and plan.total==Decimal('59.97')
+        assert state['next']['due']==date(2027,1,14) and plan.total==Decimal('59.99')
         # Explicit customized deadlines are retained by repeated startup migrations.
         plan.stages=[dict(p,due='2027-01-25' if i==1 else p['due']) for i,p in enumerate(plan.stages)];db.session.commit()
         with db.engine.begin() as connection:seed_policy(connection,vars(module))

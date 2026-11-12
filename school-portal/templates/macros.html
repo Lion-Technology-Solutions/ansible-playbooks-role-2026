@@ -3,13 +3,15 @@
 {% macro external(url, label, style='') %}<a class="button {{ style }}" href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ label }} <span aria-hidden="true">↗</span></a>{% endmacro %}
 {% macro program_details(course, country, starts) %}
 <div class="program-details">
+  {% if course.slug=='data-analytics' %}<p class="pill">Data Analytics · Foundation</p>{% endif %}
   <p>{{ student_text(course.description) }}</p>
   <dl>
     <div><dt>Duration</dt><dd>{{ course.profile.duration or 'Contact LionTech for the program duration.' }}</dd></div>
     <div><dt>Tuition</dt><dd>{% set offer=offer_for(course.id,country) %}{{ display_money(offer.total,offer.currency) if offer else 'Contact support for current pricing.' }}</dd></div>
-    <div><dt>Schedule</dt><dd>{{ 'New intakes start every Saturday.' if course.slug=='data-analytics' else 'New batches start every Saturday and Sunday.' }} Published class sessions appear in your local time zone.</dd></div>
+    <div><dt>Schedule</dt><dd>{{ 'New intakes start every Saturday.' if course.slug.startswith('data-analytics') else 'New batches start every Saturday and Sunday.' }} Published class sessions appear in your local time zone.</dd></div>
   </dl>
   {% set policy=program_payment_policy(course) %}{% if policy %}{% include 'link_plan_summary.html' %}{% else %}<p><strong>Enrollment payment: {{ display_money(5) }}</strong> · separate from tuition.</p>{% endif %}
+  {% if course.slug.startswith('data-analytics') %}<p><a href="{{ url_for('analytics_catalog') }}">Explore Data Analytics weekly lessons →</a></p>{% endif %}
   <h4>Curriculum</h4>
   {% if course.profile.curriculum %}<ul>{% for topic in course.profile.curriculum.splitlines() if topic.strip() %}<li>{{ topic }}</li>{% endfor %}</ul>{% else %}<p>Contact LionTech for the curriculum.</p>{% endif %}
   <h4>Next two start dates</h4>
@@ -18,4 +20,4 @@
 </div>
 {% endmacro %}
 {% macro icon(name) %}<svg class="ui-icon" aria-hidden="true"><use href="{{ url_for('static',filename='icons.svg') }}#{{ name }}"></use></svg>{% endmacro %}
-{% macro program_icon(slug) %}{{ icon('reports' if slug=='data-analytics' else ('code' if slug=='devops' else ('cloud' if slug=='cloud-computing' else ('shield' if slug=='cybersecurity' else 'programs')))) }}{% endmacro %}
+{% macro program_icon(slug) %}{{ icon('reports' if slug.startswith('data-analytics') else ('code' if slug=='devops' else ('cloud' if slug=='cloud-computing' else ('shield' if slug=='cybersecurity' else 'programs')))) }}{% endmacro %}

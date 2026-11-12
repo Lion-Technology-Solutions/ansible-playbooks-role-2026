@@ -745,6 +745,14 @@ class DevOpsUnit(db.Model):
     lesson = db.relationship(Lesson)
 
 
+class AnalyticsUnit(db.Model):
+    __tablename__ = 'portal_analytics_units'
+    course_id = db.Column(db.Integer, db.ForeignKey('portal_courses.id'), primary_key=True)
+    number = db.Column(db.Integer, primary_key=True)
+    lesson_id = db.Column(db.Integer, db.ForeignKey('portal_lessons.id'), unique=True, nullable=False)
+    lesson = db.relationship(Lesson)
+
+
 class LessonClass(db.Model):
     __tablename__ = 'portal_lesson_classes'
     class_id = db.Column(db.Integer, db.ForeignKey('portal_classes.id'), primary_key=True)
@@ -1034,7 +1042,7 @@ def next_start_dates(today=None):
 def available_start_dates(course,today=None):
     from start_dates import analytics_starts
     day=today or academy_today()
-    return analytics_starts(day) if course.slug=='data-analytics' else next_start_dates(day)
+    return analytics_starts(day) if course.slug.startswith('data-analytics') else next_start_dates(day)
 
 
 def upcoming_cohorts():
@@ -1093,6 +1101,8 @@ def create_app(config=None):
                         if app.config.get('DATA_ANALYTICS_LINK_PLAN',True):
                             from program_link_plans import seed_policy
                             seed_policy(connection,globals())
+                        from analytics_portal import seed_stages
+                        seed_stages(connection,globals())
                     schema_ready = True
         g.student = None
         student = db.session.get(Student, session.get('student_id')) if session.get('student_id') else None
@@ -1146,7 +1156,7 @@ def create_app(config=None):
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','devops_catalog','devops_workspace','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','devops_catalog','analytics_catalog','devops_workspace','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
 
     def student_required():
         def decorate(fn):
@@ -1239,7 +1249,7 @@ def create_app(config=None):
         if g.student:
             enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==g.student.id,Enrollment.course_id==course.id))
             if not enrollment:
-                enrollment=Enrollment(student_id=g.student.id,course_id=course.id,cohort_id=cohort.id if g.student.kind=='new' or course.slug=='data-analytics' else None)
+                enrollment=Enrollment(student_id=g.student.id,course_id=course.id,cohort_id=cohort.id if g.student.kind=='new' or course.slug.startswith('data-analytics') else None)
                 db.session.add(enrollment);db.session.commit()
             return redirect(url_for('global_payment',enrollment_id=enrollment.id))
         session['application']={'course_id':course.id,'cohort_id':cohort.id}
@@ -1603,7 +1613,7 @@ def create_app(config=None):
                 db.session.add(StudentPreference(student_id=student.id,language=language,timezone=app.extensions['local_experience']['browser_zone']() or residence(country)['timezone']))
                 enrollment=None
                 if chosen_course:
-                    enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' or chosen_course.slug=='data-analytics' else None)
+                    enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' or chosen_course.slug.startswith('data-analytics') else None)
                     db.session.add(enrollment)
                 db.session.commit()
                 flash(f'Your student number is {student.student_number}. Email verification activates your account; verified payment activates enrollment.')
@@ -1673,7 +1683,7 @@ def create_app(config=None):
                     raise ValueError('This course is not currently accepting new enrollments.')
                 cohort_id = request.form.get('cohort_id', '')
                 cohort = None
-                if g.student.kind == 'new' or course.slug=='data-analytics':
+                if g.student.kind == 'new' or course.slug.startswith('data-analytics'):
                     if not cohort_id:
                         raise ValueError('Choose an available start date for your course.')
                     cohort = db.get_or_404(Cohort, int(cohort_id))
@@ -2127,6 +2137,8 @@ def create_app(config=None):
     app.extensions['local_payments']=install_local_payments(app,db,globals(),dict(student_required=student_required,admin_required=admin_required,notify=notify))
     from devops_portal import install as install_devops
     install_devops(app,db,globals(),dict(admin_required=admin_required,student_required=student_required,enrollment_for=enrollment_for))
+    from analytics_portal import install as install_analytics
+    install_analytics(app,db,globals(),dict(admin_required=admin_required,enrollment_for=enrollment_for))
     return app
 
 

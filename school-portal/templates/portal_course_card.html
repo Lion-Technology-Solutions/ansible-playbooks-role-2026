@@ -10,3 +10,5 @@
 </article>
 
 {% if e is defined and e.course.slug=='devops' %}<a href="{{ devops_catalog_url }}">Explore all 48 DevOps lessons →</a>{% endif %}
+
+{% if e.course.slug.startswith('data-analytics') %}<a href="{{ url_for('analytics_catalog') }}">Explore the Data Analytics pathway →</a>{% endif %}

@@ -305,7 +305,7 @@ def install(app,db,m,h):
 
     def class_visible(lesson,student):
         enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==student.id,Enrollment.course_id==lesson.course_id,Enrollment.status=='approved',Enrollment.payment_status=='verified'))
-        if lesson.course.slug=='devops' and not enrollment:return False
+        if (lesson.course.slug=='devops' or lesson.course.slug.startswith('data-analytics')) and not enrollment:return False
         detail=class_detail(lesson)
         if not detail:return True
         if not detail.published:return False

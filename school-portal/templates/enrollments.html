@@ -26,13 +26,13 @@
 <div class="section-heading"><div><p class="eyebrow">EXPLORE THE PROGRAMS</p><h2>Choose your next skill.</h2></div><p>Choose a program and your preferred available start date.</p></div>
 <section class="two-col">
 {% for c in courses %}
-<article class="panel">
+<article class="panel" id="course-{{ c.id }}">
   <p class="pill">LIVE · ONLINE</p><h3>{{ c.name }}</h3>
   {{ program_details(c, g.student.country, cohorts) }}
   {% if c.id in requested_ids %}<span class="status success">Enrollment already requested</span>
   {% else %}
   <form method="post">{{ token() }}<input type="hidden" name="course_id" value="{{ c.id }}">
-    {% if g.student.kind == 'new' or c.slug=='data-analytics' %}{% set calendar_cohorts=cohorts|selectattr('course_id','equalto',c.id)|list %}{% set calendar_course_id=c.id %}{% include 'start_calendar.html' %}
+    {% if g.student.kind == 'new' or c.slug.startswith('data-analytics') %}{% set calendar_cohorts=cohorts|selectattr('course_id','equalto',c.id)|list %}{% set calendar_course_id=c.id %}{% include 'start_calendar.html' %}
     {% else %}<p class="muted">Existing students continue with their current batch; a new start date is not required.</p>{% endif %}
     <button class="button blue">Enroll in {{ c.name }} →</button>
   </form>

@@ -34,7 +34,7 @@
    options=all.filter(o=>o.course===course());select.replaceChildren(new Option('Choose an upcoming start',''),...options.map(o=>new Option(o.label,o.value)));months=[];
    if(options.length){const end=options[options.length-1].date.slice(0,7);let d=parse(options[0].date.slice(0,7)+'-01');while(iso(d).slice(0,7)<=end){months.push(iso(d).slice(0,7));d=new Date(d.getFullYear(),d.getMonth()+1,1,12);}}
    month.replaceChildren(...months.map(value=>new Option(parse(value+'-01').toLocaleDateString(locale(),{month:'long',year:'numeric'}),value)));activeMonth=months[0]||'';
-   root.querySelector('[data-calendar-hint]').textContent=options[0]?.program==='data-analytics'?'Classes start every Saturday. Choose an available date through December 2027. Dates follow Toronto time.':'Select an available program intake. Dates follow Toronto time.';
+   root.querySelector('[data-calendar-hint]').textContent=options[0]?.program?.startsWith('data-analytics')?'Classes start every Saturday. Choose an available date through December 2027. Dates follow Toronto time.':'Select an available program intake. Dates follow Toronto time.';
    selection.textContent=options.length?'Select an available date to continue.':'No start dates are currently available. Please contact LionTech.';payments(null);if(activeMonth)render();else days.replaceChildren();
   }
   month.addEventListener('change',()=>{activeMonth=month.value;render();});

@@ -307,7 +307,7 @@ def test_country_tuition_selected_program_details_and_admin_edit(app):
     admin(manager)
     course,cohort = analytics(app)
     page = request_enrollment(student,course,cohort)
-    assert b'USD' not in page.data and b'3 months' in page.data
+    assert b'USD' not in page.data and b'12 weeks' in page.data
     assert b'Curriculum' in page.data and b'Power BI' in page.data
     assert b'My selected programs' in page.data
     assert b'Saturday' in page.data

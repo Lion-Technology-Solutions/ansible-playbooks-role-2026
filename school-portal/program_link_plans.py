@@ -12,7 +12,7 @@ from werkzeug.utils import secure_filename
 from file_storage import validate_image
 
 PLAN_URL='https://flutterwave.com/pay/liontechpaymentplan'
-DEFAULT_STAGES=[{'label':'Enrollment payment — unlocks access','amount':'10.00','timing':'Due immediately on enrollment'}, {'label':'Balance of first payment','amount':'9.99','timing':'Seven days after your first class'}, {'label':'Second payment','amount':'19.99','timing':'One calendar month after the first-payment balance'}, {'label':'Final payment','amount':'19.99','timing':'Two calendar months after the first-payment balance'}]
+DEFAULT_STAGES=[{'label':'Enrollment payment — unlocks access','amount':'10.00','timing':'Due immediately on enrollment'}, {'label':'Balance of first payment','amount':'9.99','timing':'Seven days after your first class'}, {'label':'Second payment','amount':'19.99','timing':'One calendar month after the first-payment balance'}, {'label':'Final payment','amount':'20.01','timing':'Two calendar months after the first-payment balance'}]
 
 
 def dated_stages(stages,start,enrolled_on=None):
@@ -43,7 +43,8 @@ def snapshot_dates(stages,cohort_start):
 
 
 def uses_default_stages(stages):
-    return [part.get('amount') for part in stages]==[part['amount'] for part in DEFAULT_STAGES]
+    amounts=[part.get('amount') for part in stages]
+    return amounts in ([part['amount'] for part in DEFAULT_STAGES], ['10.00','9.99','19.99','19.99'])
 
 
 def seed_policy(connection,m):
@@ -52,12 +53,13 @@ def seed_policy(connection,m):
     if not course_id:return
     policy=connection.execute(select(Policy.__table__).where(Policy.course_id==course_id)).mappings().first()
     if not policy:
-        connection.execute(Policy.__table__.insert().values(course_id=course_id,currency='USD',total=Decimal('59.97'),checkout_url=PLAN_URL,stages=DEFAULT_STAGES,enabled=True))
-        values=dict(currency='USD',total=Decimal('59.97'),installments=4,full_url=PLAN_URL,installment_url=PLAN_URL)
+        connection.execute(Policy.__table__.insert().values(course_id=course_id,currency='USD',total=Decimal('59.99'),checkout_url=PLAN_URL,stages=DEFAULT_STAGES,enabled=True))
+        values=dict(currency='USD',total=Decimal('59.99'),installments=4,full_url=PLAN_URL,installment_url=PLAN_URL)
         table=Price.__table__
         connection.execute(table.update().where(table.c.course_id==course_id).values(**values) if connection.execute(select(table.c.course_id).where(table.c.course_id==course_id)).first() else table.insert().values(course_id=course_id,**values))
-    elif uses_default_stages(policy['stages']):
-        connection.execute(Policy.__table__.update().where(Policy.course_id==course_id).values(stages=DEFAULT_STAGES))
+    elif uses_default_stages(policy['stages']) and policy['total'] in (Decimal('59.97'),Decimal('59.99')):
+        connection.execute(Policy.__table__.update().where(Policy.course_id==course_id).values(total=Decimal('59.99'),stages=DEFAULT_STAGES))
+        connection.execute(Price.__table__.update().where(Price.course_id==course_id,Price.total==Decimal('59.97')).values(total=Decimal('59.99')))
     # Fill only the previously unspecified deadlines; preserve amounts, receipts and custom dates.
     Plan,Enrollment,Cohort=(m[x] for x in ('EnrollmentPaymentSchedule','Enrollment','Cohort'))
     rows=connection.execute(select(Plan.__table__,Cohort.start_date.label('cohort_start')).join(Enrollment,Enrollment.id==Plan.enrollment_id).outerjoin(Cohort,Cohort.id==Enrollment.cohort_id).where(Enrollment.course_id==course_id)).mappings().all()
@@ -93,6 +95,8 @@ def install(app,db,m,h):
         if not eligible(enrollment):return None
         source=policy(enrollment.course)
         stages=dated_stages(source.stages,enrollment.cohort.start_date if enrollment.cohort else None,m['aware'](enrollment.created_at).astimezone(ZoneInfo('America/Toronto')).date()) if uses_default_stages(source.stages) else source.stages
+        if enrollment.course.slug in ('data-analytics-intermediate','data-analytics-advanced') and len(stages)==1:
+            stages=[dict(stages[0],due=m['aware'](enrollment.created_at).astimezone(ZoneInfo('America/Toronto')).date().isoformat(),first_class=enrollment.cohort.start_date.isoformat() if enrollment.cohort else None)]
         snapshot=Plan(enrollment_id=enrollment.id,currency=source.currency,total=source.total,checkout_url=source.checkout_url,stages=stages)
         invoice=db.session.scalar(select(Invoice).where(Invoice.enrollment_id==enrollment.id))
         if not invoice:invoice=Invoice(enrollment_id=enrollment.id,amount_usd=Decimal(stages[0]['amount']));db.session.add(invoice)

@@ -40,14 +40,14 @@ def assert_locked(client,course,lesson,rid):
     assert client.post(f'/class/{lesson}/register',data={'csrf':csrf(client,'/portal')}).status_code==403
 
 
-def test_active_accounts_show_courses_payments_schedule_and_announcements_before_payment(app):
+def test_active_accounts_show_courses_payments_and_announcements_but_hide_schedule_before_payment(app):
     student,manager,course,eid,lesson,rid=setup_pending(app)
     post(manager,'/admin',action='create_update',kind='announcement',title='Student welcome update',slug='welcome-update',
          summary='Welcome to LionTech',body='View your course details and complete payment.',publication_state='published',
          starts_at='',ends_at='',registration_url='',location='',publish_at='')
     page=student.get('/portal')
     for text in [b'Account automatically approved',b'Curriculum',b'View enrollment payment',b'Payment methods',
-                 b'Paid Analytics Class',b'Student welcome update',b'Power BI']:
+                 b'Student welcome update',b'Power BI']:
         assert text in page.data
     assert_locked(student,course,lesson,rid)
     with app.app_context():
@@ -96,14 +96,14 @@ def test_approval_button_and_no_reference_guard(app):
     assert student.get(f'/class/{lesson}/join').status_code==302
 
 
-def test_revocation_locks_course_but_keeps_account_and_schedule(app):
+def test_revocation_locks_course_and_schedule_but_keeps_account(app):
     student,manager,course,eid,lesson,rid=setup_pending(app)
     post(student,f'/enrollment/{eid}/payment',reference='PAY-THEN-REVOKE')
     post(manager,'/admin',action='verify_and_approve',enrollment_id=eid)
     assert b'Paid course recording' in student.get('/portal').data
     post(manager,'/admin',action='reject',enrollment_id=eid)
     page=student.get('/portal')
-    assert b'Paid Analytics Class' in page.data
+    assert b'Paid Analytics Class' not in page.data
     assert b'Paid course recording' not in page.data
     assert_locked(student,course,lesson,rid)
     with app.app_context():

@@ -38,7 +38,7 @@ def test_future_preferred_start_persists_for_existing_student_and_fee_due_now(ap
     with app.app_context():
         enrollment=db.session.scalar(select(Enrollment));plan=db.session.get(EnrollmentPaymentSchedule,enrollment.id)
         assert enrollment.cohort_id==cohort_id
-        assert plan.total==Decimal('59.97')
+        assert plan.total==Decimal('59.99')
         assert [p['due'] for p in plan.stages]==[academy_today().isoformat(),'2028-01-01','2028-02-01','2028-03-01']
         assert plan.stages[0]['first_class']=='2027-12-25'
     # A second selection cannot silently move an existing financial agreement.
