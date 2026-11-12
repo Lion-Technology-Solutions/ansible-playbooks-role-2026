@@ -137,20 +137,15 @@ def test_due_reminders_skip_paid_and_are_idempotent_and_cron_requires_secret(app
         assert db.session.get(LifecycleEvent,event.id).status=='cancelled'
 
 
-def test_whatsapp_notification_has_authenticated_review_link_and_requires_template(app):
+def test_signup_emails_replace_crm_whatsapp_and_cancel_legacy_alerts(app):
     manager,student=app.test_client(),app.test_client();admin(manager);register(student)
     with app.test_request_context('/internal/notification-worker'):
-        row=db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.channel=='whatsapp'));identity=row.id
-        app.extensions['notifications']['process'](identity)
-        assert row.status=='awaiting_whatsapp_template'
-    app.config['INTEGRATIONS_ENCRYPTION_KEY']=__import__('cryptography.fernet',fromlist=['Fernet']).Fernet.generate_key().decode();app.config['INTEGRATION_HTTP']=lambda url,*args,**kwargs:({'sid':'AC'+'a'*32,'status':'active'} if 'api.twilio.com' in url else http_ok(url,*args,**kwargs))
-    configure(app,manager,'whatsapp',{'TWILIO_ACCOUNT_SID':'AC'+'a'*32,'TWILIO_AUTH_TOKEN':'unit-token','TWILIO_WHATSAPP_FROM':'whatsapp:+19152219465','TWILIO_TEMPLATE_SID':'HX'+'b'*32});configure(app,manager,'whatsapp',action='test')
-    calls=[];app.config['LIFECYCLE_HTTP']=lambda *args:calls.append(args) or {'sid':'SM-unit'}
-    with app.test_request_context('/internal/notification-worker'):
-        app.extensions['notifications']['process'](identity);app.extensions['notifications']['process'](identity)
-    assert len(calls)==1 and calls[0][2]['To']=='whatsapp:+14375756656'
-    variables=json.loads(calls[0][2]['ContentVariables']);assert variables['3'].startswith('https://www.liontechacademy.com/admin/students/') and variables['3'].endswith('/review')
-    assert '?' not in variables['3']
+        person=db.session.scalar(select(Student))
+        assert not db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.channel=='whatsapp'))
+        assert db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.kind=='account_created',LifecycleEvent.channel=='email'))
+        legacy=app.extensions['notifications']['enqueue'](person,'account_created',channel='whatsapp');db.session.commit()
+        app.extensions['notifications']['process'](legacy.id)
+        assert legacy.status=='cancelled' and legacy.attempts==0
 
 
 def test_admin_changed_password_works_for_integrations_and_new_chatgpt_keys(app):

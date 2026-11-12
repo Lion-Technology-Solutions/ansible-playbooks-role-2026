@@ -2,7 +2,7 @@ import io
 from urllib.error import HTTPError
 import pytest
 from sqlalchemy import select
-from app import db,LifecycleEvent
+from app import db,LifecycleEvent,Student
 from test_portal import admin,register,csrf
 from test_readability_notifications import credentials
 
@@ -11,7 +11,7 @@ def event(app,manager,monkeypatch,sid):
     student=app.test_client();register(student)
     for key,value in credentials().items():monkeypatch.setenv(key,value)
     with app.app_context():
-        row=db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.kind=='account_created',LifecycleEvent.channel=='whatsapp'))
+        row=app.extensions['notifications']['enqueue'](db.session.scalar(select(Student)),'account_created',channel='whatsapp')
         row.status='accepted';row.provider_id=sid;db.session.commit();return row.id
 
 
