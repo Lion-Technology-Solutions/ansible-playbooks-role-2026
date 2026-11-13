@@ -22,6 +22,7 @@ Design reference: https://www.figma.com/design/KEjpn4ZX7yaYecgGf6nZ2F?node-id=10
 | Graphics | Program pages lacked distinct visual cues. | Five small decorative SVG illustrations for learning and the four program families; existing welcome imagery retained. |
 | Navigation | Administration had a long flat list of links. | Primary work stays visible, secondary administration and curricula are expandable. Sign-out remains accessible. |
 | Payment copy | Homepage instructions still requested a payment reference after manual submissions closed. | Enrollment guidance now points to secure provider checkout. Tuition, routing and verification logic are unchanged. |
+| Recovery states | Expired invitations, conflicts, oversized uploads and service/rate-limit errors used plain framework screens. | Branded recovery pages preserve the original status and protocol headers, with persistent support. |
 | Legal pages | Inline layout styles conflicted with the existing Content Security Policy. | Layout moved into the shared stylesheet, with readable policy navigation. |
 | Mobile/print | A floating support control must avoid mobile navigation and certificate printing. | Safe-area-aware positioning above learner bottom navigation; scrollable bounded panel; support controls hidden for print. |
 

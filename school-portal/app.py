@@ -2170,10 +2170,22 @@ def create_app(config=None):
             attendance=db.session.scalars(select(Attendance).order_by(Attendance.submitted_at.desc())).all())
 
     @app.errorhandler(400)
+    @app.errorhandler(401)
     @app.errorhandler(403)
     @app.errorhandler(404)
+    @app.errorhandler(405)
+    @app.errorhandler(409)
+    @app.errorhandler(410)
+    @app.errorhandler(413)
+    @app.errorhandler(422)
+    @app.errorhandler(429)
+    @app.errorhandler(503)
     def handled_error(error):
-        return render_template('error.html', code=error.code, message=error.description), error.code
+        # Keep protocol headers such as Allow and Retry-After on recovery screens.
+        response=error.get_response()
+        response.set_data(render_template('error.html',code=error.code,message=error.description))
+        response.content_type='text/html; charset=utf-8'
+        return response
 
     from integrations import install as install_integrations
     app.extensions['integrations']=install_integrations(app,db,globals(),dict(admin_required=admin_required,student_required=student_required))

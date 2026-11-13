@@ -102,3 +102,27 @@ def test_public_help_does_not_clear_email_or_mfa_gates(app):
     assert other.get('/support').status_code==200
     assert other.get('/branding.css').status_code==200
     assert other.get('/portal').status_code==302
+
+
+@pytest.mark.parametrize('code',[401,409,410,413,422,429,503])
+def test_recovery_states_keep_brand_support_and_status(app,code):
+    from werkzeug.exceptions import default_exceptions
+    # Invoke the real registered handler without adding test-only production routes.
+    client=app.test_client();client.get('/')
+    with client.session_transaction() as session_values:session_copy=dict(session_values)
+    with app.test_request_context('/support'):
+        from flask import session
+        session.update(session_copy)
+        app.preprocess_request()
+        response=app.make_response(app.handle_http_exception(default_exceptions[code]()))
+        assert response.status_code==code
+        page=Page();page.feed(response.data.decode());assert page.support==1 and page.brand>=1
+
+
+def test_method_error_keeps_allow_header_and_expired_staff_invite_has_support(app):
+    client=app.test_client()
+    response=client.open('/support',method='PUT')
+    assert response.status_code==405 and 'GET' in response.headers['Allow']
+    assert b'id="site-support"' in response.data
+    expired=client.get('/staff/invitations/not-a-real-invitation')
+    assert expired.status_code==410 and b'id="site-support"' in expired.data
