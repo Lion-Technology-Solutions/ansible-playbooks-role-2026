@@ -1097,6 +1097,10 @@ globals().update(define_pathway_models(db))
 
 from staff_models import define as define_staff_models
 globals().update(define_staff_models(db,now))
+from team_workflows import define as define_team_workflows
+globals().update(define_team_workflows(db,now))
+from lesson_teaching import define as define_lesson_teaching
+globals().update(define_lesson_teaching(db))
 
 def create_app(config=None):
     app = Flask(__name__)
@@ -1176,7 +1180,7 @@ def create_app(config=None):
                 request.max_content_length=2*1024*1024+16384
             if request.endpoint == 'manual_fee':
                 request.max_content_length = 2*1024*1024+8192
-            if request.endpoint == 'asset_chunk':
+            if request.endpoint in ('asset_chunk','staff_lesson_upload_chunk'):
                 request.max_content_length = FORM_LIMIT
             token = session.get('csrf', '')
             if not token or not hmac.compare_digest(token.encode(), (request.headers.get('X-CSRF-Token') or request.form.get('csrf', '')).encode()):
@@ -1188,7 +1192,7 @@ def create_app(config=None):
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
         response.headers.setdefault('Referrer-Policy','strict-origin-when-cross-origin')
-        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; form-action 'self' https://checkout.stripe.com https://checkout.flutterwave.com https://checkout.flutterwave.com.ng https://accounts.google.com https://login.microsoftonline.com https://www.facebook.com; frame-ancestors 'none'; base-uri 'self'"
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; frame-src 'self' blob: https://www.youtube-nocookie.com; object-src 'none'; form-action 'self' https://checkout.stripe.com https://checkout.flutterwave.com https://checkout.flutterwave.com.ng https://accounts.google.com https://login.microsoftonline.com https://www.facebook.com; frame-ancestors 'none'; base-uri 'self'"
         return response
 
     @app.context_processor
@@ -1536,7 +1540,8 @@ def create_app(config=None):
     def asset_content(asset_id):
         asset=db.get_or_404(Asset,asset_id)
         if not asset.ready: abort(404)
-        if not session.get('admin'):
+        teaching_access=bool(getattr(g,'staff',None) and not asset.archived and asset.purpose=='lesson' and any(app.extensions['lesson_teaching']['can_teach'](lesson.course_id) for lesson in db.session.scalars(select(Lesson).join(LessonFile,LessonFile.lesson_id==Lesson.id).where(LessonFile.asset_id==asset.id))))
+        if not session.get('admin') and not teaching_access:
             if not g.student: return redirect(url_for('login'))
             if asset.archived or asset.purpose!='lesson': abort(403)
             allowed=db.session.scalar(select(LessonFile.lesson_id).join(Lesson,Lesson.id==LessonFile.lesson_id).join(Enrollment,Enrollment.course_id==Lesson.course_id).where(
@@ -2225,6 +2230,10 @@ def create_app(config=None):
     install_students_console(app,db,globals(),dict(admin_required=admin_required))
     from staff_portal import install as install_staff_portal
     install_staff_portal(app,db,globals(),dict(admin_required=admin_required))
+    from team_workflows import install as install_team_workflows
+    install_team_workflows(app,db,globals(),dict(admin_required=admin_required))
+    from lesson_teaching import install as install_lesson_teaching
+    install_lesson_teaching(app,db,globals(),dict(admin_required=admin_required))
     from class_reminders import install as install_class_reminders
     app.extensions['class_reminders']=install_class_reminders(app,db,globals())
     from pathways import install as install_pathways
