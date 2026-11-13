@@ -115,6 +115,7 @@ def install(app,db,m,h):
         plan=ensure(enrollment)
         if not plan:return None
         paid=sum(db.session.scalars(select(Entry.amount).where(Entry.enrollment_id==enrollment.id,Entry.currency==plan.currency)),Decimal(0))
+        if 'admin_enrollment' in app.extensions:paid+=app.extensions['admin_enrollment']['credit'](enrollment,plan.currency)
         cumulative=Decimal(0);next_payment=None;parts=[]
         for index,stage in enumerate(plan.stages):
             value=Decimal(stage['amount']);covered=max(Decimal(0),min(value,paid-cumulative));cumulative+=value

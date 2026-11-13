@@ -83,15 +83,15 @@ def test_receipt_does_not_unlock_and_admin_combined_approval_does(app):
 def test_approval_button_and_no_reference_guard(app):
     student,manager,course,eid,lesson,rid=setup_pending(app)
     page=manager.get('/admin?view=enrollments')
-    assert b'disabled aria-disabled="true">Approve enrollment' in page.data
+    assert b'Review \xc2\xb7 approve or decline' in page.data
     page=post(manager,'/admin',action='verify_and_approve',enrollment_id=eid)
     assert b'must submit a payment reference' in page.data
     with app.app_context():
         assert db.session.get(Enrollment,eid).payment_status=='unpaid'
     historical_payment(student,eid,'VERIFY-SEPARATELY')
-    assert b'Verify payment &amp; approve enrollment' in manager.get('/admin?view=enrollments').data
+    assert b'Review \xc2\xb7 approve or decline' in manager.get('/admin?view=enrollments').data
     post(manager,'/admin',action='verify_payment',enrollment_id=eid)
-    assert b'class="button blue">Approve enrollment' in manager.get('/admin?view=enrollments').data
+    assert b'Review \xc2\xb7 approve or decline' in manager.get('/admin?view=enrollments').data
     assert_locked(student,course,lesson,rid)
     post(manager,'/admin',action='approve',enrollment_id=eid)
     assert student.get(f'/class/{lesson}/join').status_code==302

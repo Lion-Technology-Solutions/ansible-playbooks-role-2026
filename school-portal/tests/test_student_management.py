@@ -3,13 +3,24 @@ from datetime import timedelta
 from decimal import Decimal
 from sqlalchemy import select,func
 from app import db,Student,Enrollment,StudentControl,StudentArchive,TuitionControl,StudentManagementAudit,PaymentEntry,LifecycleEvent,BillingSelection,TuitionWhatsAppPreference,now
-from test_global_portal import setup,schedule
+from test_global_portal import setup as setup_payment,schedule
 from test_portal import csrf,register,admin,analytics,approve
+
+
+def setup(app,*args,**kwargs):
+    result=setup_payment(app,*args,**kwargs)
+    with app.app_context():
+        e=db.session.get(Enrollment,result[4]);e.payment_status='verified';e.payment_reference='LEGACY-VERIFIED-TUITION';db.session.commit()
+    return result
 
 
 def manage(manager,sid,**fields):
     path='/admin/students/'+sid+'/manage'
-    return manager.post(path,data={'csrf':csrf(manager,'/admin?view=students'),'admin_password':'test-admin-password',**fields},follow_redirects=True)
+    response=manager.post(path,data={'csrf':csrf(manager,'/admin?view=students'),'admin_password':'test-admin-password',**fields},follow_redirects=True)
+    if response.request.path.endswith('/enrollment-review'):
+        from test_portal import complete_enrollment_review
+        return complete_enrollment_review(manager,fields['enrollment_id'],fully_paid=fields.get('tuition_status')=='completed')
+    return response
 
 
 def ids(app):
