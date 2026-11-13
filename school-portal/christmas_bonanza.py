@@ -82,6 +82,7 @@ def install(app,db,m):
         if not cohort:cohort=m['Cohort'](course_id=course.id,start_date=start,label='Fourth-Saturday intake');db.session.add(cohort);db.session.flush()
         return cohort
     def mutable(enrollment):
+        if db.session.get(m['EnrollmentReview'],enrollment.id):return False
         if enrollment.status in ('approved','rejected','revoked') or enrollment.payment_status in ('verified','submitted'):return False
         if db.session.scalar(select(m['PaymentEntry'].id).where(m['PaymentEntry'].enrollment_id==enrollment.id).limit(1)):return False
         if db.session.get(m['BillingSelection'],enrollment.id):return False
@@ -119,9 +120,11 @@ def install(app,db,m):
             enrollment=Enrollment(student_id=student.id,course_id=course.id,cohort_id=cohort_for(course,start).id);db.session.add(enrollment);db.session.flush()
         bind(enrollment,values);db.session.commit();return enrollment
     def payment_allowed(enrollment,allow_expired=False):
+        if db.session.get(m['EnrollmentOpeningCredit'],enrollment.id):return
         row=db.session.get(Binding,enrollment.id)
         if row and not row.confirmed_at and not allow_expired and m['aware'](clock())>=m['aware'](row.expires_at):raise ValueError('The Bonanza enrollment deadline has passed. Contact support to review any payment already made. No higher-price payment has been substituted.')
     def confirm(record,allow_expired=False):
+        if db.session.get(m['EnrollmentOpeningCredit'],record.quote.enrollment_id):return True
         row=db.session.scalar(select(Binding).where(Binding.enrollment_id==record.quote.enrollment_id).with_for_update())
         if not row or row.confirmed_at:return True
         if record.quote.stage!=0 or record.quote.base_amount!=MONTHLY or record.quote.base_currency!='USD':return False
@@ -177,5 +180,5 @@ def install(app,db,m):
         if request.method=='GET' and request.endpoint=='application' and request.args.get('program') in PROGRAMS:return redirect(url_for('christmas_bonanza',program=request.args['program']))
     @app.context_processor
     def context():
-        return dict(bonanza_months=lambda program:PROGRAMS.get(program,('',0))[1],bonanza_active=active(),bonanza_end=END.astimezone(timezone.utc).isoformat(),bonanza_now=m['aware'](clock()).astimezone(timezone.utc).isoformat(),bonanza_monthly=MONTHLY,bonanza_family=family,bonanza_binding=lambda enrollment:db.session.get(Binding,enrollment.id),bonanza_url=lambda program,level='foundation':url_for('christmas_bonanza',program=program,level=level))
+        return dict(bonanza_months=lambda program:PROGRAMS.get(program,('',0))[1],bonanza_active=active(),bonanza_end=END.astimezone(timezone.utc).isoformat(),bonanza_now=m['aware'](clock()).astimezone(timezone.utc).isoformat(),bonanza_monthly=MONTHLY,bonanza_family=family,bonanza_binding=lambda enrollment:None if db.session.get(m['EnrollmentOpeningCredit'],enrollment.id) else db.session.get(Binding,enrollment.id),bonanza_url=lambda program,level='foundation':url_for('christmas_bonanza',program=program,level=level))
     app.extensions['bonanza']=dict(active=active,clock=clock,bind=bind,resume=resume,validate_choice=validate_choice,payment_allowed=payment_allowed,confirm=confirm,overview=overview)

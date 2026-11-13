@@ -44,6 +44,7 @@ def install(app,db,m,h):
         db.session.info.setdefault('tuition_managed',set()).add(enrollment.id)
         row.status=new_status;row.reason=reason;row.source=source;row.revision+=1;row.updated_at=now()
         if source=='admin':row.access_hold=False
+        if 'admin_enrollment' in app.extensions and not app.extensions['admin_enrollment']['approved'](enrollment):grant=False
         if new_status in ('current','completed'):
             if grant and not row.access_hold and active(enrollment.student):
                 # Administrative reconciliation verifies eligibility, without fabricating cash receipts.
@@ -67,6 +68,8 @@ def install(app,db,m,h):
     def guard(target):
         for enrollment in list(target.dirty):
             if not isinstance(enrollment,Enrollment) or enrollment.status!='approved':continue
+            if 'admin_enrollment' in app.extensions and not app.extensions['admin_enrollment']['approved'](enrollment):
+                decision=target.get(m['EnrollmentReview'],enrollment.id);enrollment.status='rejected' if decision and decision.status=='declined' else 'pending';continue
             row=target.get(Tuition,enrollment.id)
             if row and (row.access_hold or row.status in ('pending','overdue')):enrollment.status='revoked'
     def sweep():
@@ -114,6 +117,8 @@ def install(app,db,m,h):
             if not enrollment:abort(400,'Choose a program enrollment.')
             new_status='current' if action=='approve_existing' else request.form.get('tuition_status')
             if new_status in ('current','completed') and (request.form.get('records_confirmed')!='yes' or not reason):abort(400,'Confirm the existing tuition record and enter a reconciliation note before granting access.')
+            if action=='approve_existing' or (enrollment.status!='approved' and new_status in ('current','completed')):
+                return redirect(url_for('admin_enrollment_review',student_id=student.id,enrollment_id=enrollment.id))
             if new_status in ('current','completed') and not active(student):abort(400,'Reactivate the student account before granting access.')
             change(enrollment,new_status,reason or 'Administrative tuition update.')
         elif action=='approve':

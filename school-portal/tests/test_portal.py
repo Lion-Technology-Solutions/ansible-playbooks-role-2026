@@ -19,7 +19,24 @@ def post(client, path, **fields):
     if path.startswith('/enrollment/') and path.endswith('/payment') and 'student_number' not in fields:
         match=re.search(rb'LT-\d{4}-\d{6,}',client.get('/portal').data)
         if match:fields['student_number']=match[0].decode()
-    return client.post(path, data={'csrf': csrf(client, page), **fields}, follow_redirects=True)
+    response=client.post(path, data={'csrf': csrf(client, page), **fields}, follow_redirects=True)
+    if path=='/admin' and fields.get('action') in ('approve','verify_and_approve','reject') and response.request.path.endswith('/enrollment-review'):
+        return complete_enrollment_review(client,fields['enrollment_id'],decision='decline' if fields['action']=='reject' else 'approve')
+    return response
+
+
+def complete_enrollment_review(client,eid,decision='approve',fully_paid=False):
+    # Exercise the required review form rather than bypassing its new server-side confirmations.
+    with client.application.app_context():
+        e=db.session.get(Enrollment,eid);sid=e.student_id
+        data=client.application.extensions['admin_enrollment']['preview'](e.student,e)
+        cohort=e.cohort_id or db.session.scalar(select(Cohort.id).where(Cohort.course_id==e.course_id).order_by(Cohort.start_date))
+        values=dict(version=data['version'],student_kind=e.student.kind,course_id=e.course_id,cohort_id=cohort,agreed_total=str(data['total']),currency=data['currency'])
+    url='/admin/students/'+sid+'/enrollment-review?enrollment_id='+str(eid)
+    payload=dict(values,csrf=csrf(client,'/admin'),mode='confirm',decision=decision,confirm_program='yes',confirm_tuition='yes',records_confirmed='yes',allow_access='yes',reason='Reviewed the program, tuition agreement and verified payment record.',admin_password='test-admin-password')
+    if fully_paid and data['paid']<data['total']:payload.update(mode='custom',paid_total=str(data['total']),replace_terms='yes')
+    return client.post(url,data=payload,follow_redirects=True)
+
 
 
 def register(client, email='student@example.com', country='Cameroon', kind='new'):

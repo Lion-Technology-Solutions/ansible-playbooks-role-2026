@@ -1,7 +1,7 @@
 {% from 'macros.html' import token with context %}
 {% macro actions(student,enrollment=none) %}
 {% set archived=student_archived(student) %}
-<div class="student-admin-actions">
+<div class="student-admin-actions">{% if not archived %}<a class="button blue compact" data-open-enrollment-review href="{{ url_for('admin_enrollment_review',student_id=student.id,enrollment_id=enrollment.id if enrollment else none) }}">{{ 'Review enrollment & tuition' if enrollment else 'Assign program & set tuition' }}</a>{% endif %}
 <a class="button outline compact" href="{{ url_for('account_review',student_id=student.id) }}">View record</a>
 {% if not archived and student_whatsapp(student) %}<a class="button outline compact" href="{{ student_whatsapp(student) }}" target="_blank" rel="noopener">Open WhatsApp ↗</a>{% endif %}
 <details><summary class="button blue compact">Manage student</summary>

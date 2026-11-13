@@ -1108,6 +1108,12 @@ from member_profiles import define as define_member_profiles
 globals().update(define_member_profiles(db))
 from christmas_bonanza import define as define_christmas_bonanza
 globals().update(define_christmas_bonanza(db,now))
+from admin_enrollment import define as define_admin_enrollment
+globals().update(define_admin_enrollment(db,now))
+from account_retention import define as define_account_retention
+globals().update(define_account_retention(db,now))
+from payment_alerts import define as define_payment_alerts
+globals().update(define_payment_alerts(db,now))
 
 def create_app(config=None):
     app = Flask(__name__)
@@ -1388,6 +1394,13 @@ def create_app(config=None):
         totals={}
         for entry in entries:
             if entry.enrollment_id in custom_ids or not db.session.get(FeeLedger,entry.id):totals[entry.enrollment_id]=totals.get(entry.enrollment_id,Decimal(0))+entry.amount
+        for agreement in custom_terms:
+            if 'admin_enrollment' in app.extensions:
+                enrollment=db.session.get(Enrollment,agreement.enrollment_id)
+                totals[agreement.enrollment_id]=totals.get(agreement.enrollment_id,Decimal(0))+app.extensions['admin_enrollment']['credit'](enrollment,currency)
+        historical_rows=list(db.session.scalars(select(EnrollmentOpeningCredit).where(EnrollmentOpeningCredit.enrollment_id.in_([e.id for e in records]),EnrollmentOpeningCredit.currency==currency,EnrollmentOpeningCredit.amount>0)))
+        historical_ids={item.enrollment_id for item in historical_rows}
+        historical_credit=sum((item.amount for item in historical_rows),Decimal(0))
         collected=sum((entry.amount for entry in entries),Decimal(0))
         pending_fees=list(db.session.scalars(select(FeeInvoice).where(FeeInvoice.enrollment_id.in_([e.id for e in records]),FeeInvoice.status=='pending'))) if currency=='USD' else []
         outstanding=(sum((max(Decimal(0),item.total-totals.get(item.enrollment_id,Decimal(0))) for item in terms),Decimal(0))+sum((invoice.amount_usd for invoice in pending_fees if invoice.enrollment_id not in custom_ids),Decimal(0))) if terms or pending_fees else None
@@ -1401,7 +1414,7 @@ def create_app(config=None):
             'paid_students':len({e.student_id for e in confirmed}),'pending':sum(e.payment_status!='verified' and e.status!='rejected' for e in records),
             'verified':len({e.student_id for e in records if e.payment_status=='verified'}),'active':len({e.student_id for e in confirmed}),
             'conversion':round(len(confirmed)/len(records)*100) if records else 0,'target':goal.students if goal else 5000,
-            'collected':collected,'outstanding':outstanding,'forecast':collected+outstanding if outstanding is not None else None,
+            'collected':collected,'historical_credit':historical_credit,'outstanding':outstanding,'forecast':collected+outstanding if outstanding is not None else None,
             'currency':currency,'program':program,'country':country,'year':year,'unrecorded':sum(e.payment_status=='verified' and e.id not in {entry.enrollment_id for entry in entries} for e in records)}
 
     @app.get('/admin/reports/payments.csv')
@@ -2090,6 +2103,8 @@ def create_app(config=None):
                     item.published, item.publish_at, item.updated_at = state == 'published', utc_field('publish_at',True) or now(), now()
                 elif action in ('verify_payment', 'verify_and_approve', 'approve', 'reject'):
                     enrollment = db.get_or_404(Enrollment, int(field('enrollment_id', 20)))
+                    if action in ('approve','reject'):
+                        return redirect(url_for('admin_enrollment_review',student_id=enrollment.student_id,enrollment_id=enrollment.id))
                     if action in ('verify_payment', 'verify_and_approve'):
                         if enrollment.payment_status not in ('submitted','verified') or not enrollment.payment_reference:
                             raise ValueError('The student must submit a payment reference before you verify payment.')
@@ -2098,7 +2113,8 @@ def create_app(config=None):
                         if request.form.get('amount','').strip():
                             record_payment_entry(enrollment,enrollment.payment_reference,field('amount',20),field('currency',3))
                         if action == 'verify_and_approve':
-                            confirm_enrollment(enrollment)
+                            db.session.commit()
+                            return redirect(url_for('admin_enrollment_review',student_id=enrollment.student_id,enrollment_id=enrollment.id))
                     elif action == 'approve':
                         confirm_enrollment(enrollment)
                     else:
@@ -2274,6 +2290,12 @@ def create_app(config=None):
     install_instructor_workspace(app,db,globals())
     from christmas_bonanza import install as install_christmas_bonanza
     install_christmas_bonanza(app,db,globals())
+    from admin_enrollment import install as install_admin_enrollment
+    install_admin_enrollment(app,db,globals(),dict(admin_required=admin_required))
+    from payment_alerts import install as install_payment_alerts
+    install_payment_alerts(app,db,globals(),dict(student_required=student_required))
+    from account_retention import install as install_account_retention
+    install_account_retention(app,db,globals(),dict(admin_required=admin_required))
     from class_reminders import install as install_class_reminders
     app.extensions['class_reminders']=install_class_reminders(app,db,globals())
     from pathways import install as install_pathways
