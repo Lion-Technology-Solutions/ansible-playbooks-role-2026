@@ -119,6 +119,7 @@ def install(app,db,m,h):
                     elif row.status in ('revoked','rejected') and ('approved' in state.attrs.status.history.deleted or row.status=='revoked'):enqueue(student,'access_revoked',payload=payload,session_=session_)
     def message(event):
         if event.kind=='payment_deletion_warning':return app.extensions['account_retention']['warning_text'](event)
+        if event.kind=='staff_enrollment_submitted':return 'Staff enrollment submission ready for review',('An assigned team member submitted an enrollment packet. Sign in to verify the program, tuition and payment evidence before granting access.\n'+ORIGIN+'/admin/enrollment-submissions/'+event.payload['submission_id'])
         if event.kind=='account_created':
             return 'Welcome to LionTech Academy',('Hello '+event.student.name+',\nYour student account has been created.\nStudent number: '+event.student.student_number+'\nVerify your email if prompted, then select your program and complete enrollment in the portal. Account creation does not confirm payment or grant learning access.\n'+ORIGIN+'/student/login\nSupport: liontechacademy@gmail.com')
         if event.kind=='class_reminder':
@@ -220,7 +221,7 @@ def install(app,db,m,h):
             if row.channel=='email':
                 if not service['ready']('email'):row.status='awaiting_email';db.session.commit();return
                 values=service['config']('email');title,body=message(row);recipient=row.payload.get('recipient') or student.email
-                if row.kind in ('support_account_created','support_payment_review'):
+                if row.kind in ('support_account_created','support_payment_review','staff_enrollment_submitted'):
                     recipient=app.config.get('ADMIN_NOTIFICATION_EMAIL','liontechacademy@gmail.com')
                 row.attempts+=1
                 transport('https://api.sendgrid.com/v3/mail/send','POST',{'personalizations':[{'to':[{'email':recipient}]}],'from':{'email':values['SENDGRID_FROM_EMAIL']},'reply_to':{'email':app.config.get('ADMIN_NOTIFICATION_EMAIL','liontechacademy@gmail.com')},'subject':title,'content':[{'type':'text/plain','value':body}]},{'Authorization':'Bearer '+values['SENDGRID_API_KEY']})

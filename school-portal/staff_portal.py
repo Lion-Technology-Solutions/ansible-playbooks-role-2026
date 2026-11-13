@@ -249,6 +249,7 @@ def install(app,db,m,h):
         if task.member_id!=g.staff.id:abort(403)
         status='completed' if request.form.get('action')=='submit_task' else request.form.get('status');result=request.form.get('result','').strip()
         if status not in ('assigned','in_progress','completed') or len(result)>5000 or (status=='completed' and not result):abort(400,'Record the outcome before marking a task completed.')
+        if status=='completed' and (row:=app.extensions['staff_enrollment']['latest'](task.id)) and row.status=='submitted' and app.extensions['staff_enrollment']['active'](row):abort(409,'Enrollment submission is awaiting administrator review. Save progress while the review is pending.')
         if status=='completed' and task.status!='completed':app.extensions['task_alerts']['submitted'](task)
         task.status=status;task.result=result;task.updated_at=now();audit('task_'+status,g.staff,'Task '+str(task.id));db.session.commit();return redirect(url_for('staff_workboard') if db.session.get(m['TaskRecord'],task.id) else url_for('staff_tasks'))
     @app.route('/staff/reports',methods=['GET','POST'])

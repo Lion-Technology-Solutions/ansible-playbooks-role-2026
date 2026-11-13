@@ -1110,6 +1110,8 @@ from christmas_bonanza import define as define_christmas_bonanza
 globals().update(define_christmas_bonanza(db,now))
 from admin_enrollment import define as define_admin_enrollment
 globals().update(define_admin_enrollment(db,now))
+from staff_enrollment import define as define_staff_enrollment
+globals().update(define_staff_enrollment(db,now))
 from account_retention import define as define_account_retention
 globals().update(define_account_retention(db,now))
 from payment_alerts import define as define_payment_alerts
@@ -2294,6 +2296,8 @@ def create_app(config=None):
     install_admin_enrollment(app,db,globals(),dict(admin_required=admin_required))
     from payment_alerts import install as install_payment_alerts
     install_payment_alerts(app,db,globals(),dict(student_required=student_required))
+    from staff_enrollment import install as install_staff_enrollment
+    install_staff_enrollment(app,db,globals(),dict(admin_required=admin_required))
     from account_retention import install as install_account_retention
     install_account_retention(app,db,globals(),dict(admin_required=admin_required))
     from class_reminders import install as install_class_reminders
