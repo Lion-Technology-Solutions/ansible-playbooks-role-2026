@@ -21,4 +21,4 @@
 <symbol id="code" viewBox="0 0 24 24"><path d="m7 5-6 7 6 7m10-14 6 7-6 7M14 2l-4 20"/></symbol>
 <symbol id="certificate" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="15" rx="2"/><path d="M8 6h8M8 10h8m-7 7-2 6 5-3 5 3-2-6"/></symbol>
 <symbol id="logout" viewBox="0 0 24 24"><path d="M9 3H3v18h6M9 12h13m-6-6 6 6-6 6"/></symbol>
-</defs></svg>
+<symbol id="mail" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m3 6 9 7 9-7"/></symbol></defs></svg>
