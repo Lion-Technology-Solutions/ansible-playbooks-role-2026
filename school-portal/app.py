@@ -1318,6 +1318,7 @@ def create_app(config=None):
             if program:
                 level=next((part['key'] for part in __import__('pathways').PROGRAMS[program][1] if part['slug']==course.slug),'foundation')
                 return redirect(url_for('christmas_bonanza',program=program,level=level,date=cohort.start_date.isoformat(),step='review'))
+        session.pop('bonanza_choice',None)
         if g.student:
             enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==g.student.id,Enrollment.course_id==course.id))
             if not enrollment:
@@ -2215,6 +2216,8 @@ def create_app(config=None):
     def handled_error(error):
         # Keep protocol headers such as Allow and Retry-After on recovery screens.
         response=error.get_response()
+        # Asset requests intentionally skip user/schema initialization.
+        if request.endpoint=='static':return response
         response.set_data(render_template('error.html',code=error.code,message=error.description))
         response.content_type='text/html; charset=utf-8'
         return response
