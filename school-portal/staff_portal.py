@@ -1,4 +1,5 @@
 """Invitation-only staff identities, scoped workforce access and versioned daily reports."""
+from lesson_tasks import task_number
 import base64,hashlib,hmac,io,re,secrets,zipfile
 from datetime import date,timedelta
 from functools import wraps
@@ -239,7 +240,7 @@ def install(app,db,m,h):
             if not 1<=len(title)<=160 or len(description)>5000 or priority not in ('normal','high','urgent'):abort(400)
             try:due=date.fromisoformat(request.form.get('due_on',''))
             except ValueError:abort(400,'Choose a due date.')
-            task=Task(member_id=target.id,title=title,description=description,due_on=due,priority=priority);db.session.add(task);db.session.flush();app.extensions['task_alerts']['assigned'](task);audit('task_assigned',target,'Task '+str(task.id));row=mail(target,'task','task:'+str(task.id),target.email,'New LionTech staff task',f'{task.title}\nDue: {task.due_on}\nView your assigned task: {ORIGIN}/staff/tasks');db.session.commit();dispatch([row.id]);return redirect(url_for('staff_tasks'))
+            task=Task(member_id=target.id,title=title,description=description,due_on=due,priority=priority);db.session.add(task);db.session.flush();app.extensions['task_alerts']['assigned'](task);audit('task_assigned',target,'Task '+str(task.id));row=mail(target,'task','task:'+str(task.id),target.email,'New LionTech staff task',f'{task_number(task)} · {task.title}\nDue: {task.due_on}\nView your assigned task: {ORIGIN}/staff/tasks');db.session.commit();dispatch([row.id]);return redirect(url_for('staff_tasks'))
         return render_template('staff_tasks.html',people=people,tasks=list(db.session.scalars(select(Task).where(Task.member_id.in_([s.id for s in people])).order_by(Task.due_on))))
     @app.post('/staff/tasks/<int:task_id>')
     @member_required
@@ -249,6 +250,7 @@ def install(app,db,m,h):
         if task.member_id!=g.staff.id:abort(403)
         status='completed' if request.form.get('action')=='submit_task' else request.form.get('status');result=request.form.get('result','').strip()
         if status not in ('assigned','in_progress','completed') or len(result)>5000 or (status=='completed' and not result):abort(400,'Record the outcome before marking a task completed.')
+        if status=='completed' and (lesson_assignment:=db.session.get(m['LessonTask'],task.id)) and lesson_assignment.action in ('content','recordings','schedule'):abort(409,'Complete this work through the assigned lesson task; content requires administrator approval.')
         if status=='completed' and (row:=app.extensions['staff_enrollment']['latest'](task.id)) and row.status=='submitted' and app.extensions['staff_enrollment']['active'](row):abort(409,'Enrollment submission is awaiting administrator review. Save progress while the review is pending.')
         if status=='completed' and task.status!='completed':app.extensions['task_alerts']['submitted'](task)
         task.status=status;task.result=result;task.updated_at=now();audit('task_'+status,g.staff,'Task '+str(task.id));db.session.commit();return redirect(url_for('staff_workboard') if db.session.get(m['TaskRecord'],task.id) else url_for('staff_tasks'))

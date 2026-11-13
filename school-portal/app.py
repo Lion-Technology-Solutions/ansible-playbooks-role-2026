@@ -1112,6 +1112,10 @@ from admin_enrollment import define as define_admin_enrollment
 globals().update(define_admin_enrollment(db,now))
 from staff_enrollment import define as define_staff_enrollment
 globals().update(define_staff_enrollment(db,now))
+from lesson_tasks import define as define_lesson_tasks
+globals().update(define_lesson_tasks(db,now))
+from lesson_review_notices import define as define_lesson_review_notices
+globals().update(define_lesson_review_notices(db,now))
 from account_retention import define as define_account_retention
 globals().update(define_account_retention(db,now))
 from payment_alerts import define as define_payment_alerts
@@ -1574,7 +1578,7 @@ def create_app(config=None):
         asset=db.get_or_404(Asset,asset_id)
         if not asset.ready: abort(404)
         teaching_access=bool(getattr(g,'staff',None) and not asset.archived and asset.purpose=='lesson' and any(app.extensions['lesson_teaching']['can_teach'](lesson.course_id) for lesson in db.session.scalars(select(Lesson).join(LessonFile,LessonFile.lesson_id==Lesson.id).where(LessonFile.asset_id==asset.id))))
-        if not session.get('admin') and not teaching_access:
+        if not session.get('admin') and not teaching_access and not (asset.purpose=='lesson' and not asset.archived and app.extensions['lesson_tasks']['files_access'](asset.id)):
             if not g.student: return redirect(url_for('login'))
             if asset.archived or asset.purpose!='lesson': abort(403)
             allowed=db.session.scalar(select(LessonFile.lesson_id).join(Lesson,Lesson.id==LessonFile.lesson_id).join(Enrollment,Enrollment.course_id==Lesson.course_id).where(
@@ -2298,6 +2302,12 @@ def create_app(config=None):
     install_payment_alerts(app,db,globals(),dict(student_required=student_required))
     from staff_enrollment import install as install_staff_enrollment
     install_staff_enrollment(app,db,globals(),dict(admin_required=admin_required))
+    from lesson_review_notices import install as install_lesson_review_notices
+    install_lesson_review_notices(app,db,globals(),dict(admin_required=admin_required))
+    from lesson_tasks import install as install_lesson_tasks
+    install_lesson_tasks(app,db,globals(),dict(admin_required=admin_required))
+    from lesson_task_scheduling import install as install_lesson_task_scheduling
+    install_lesson_task_scheduling(app,db,globals())
     from account_retention import install as install_account_retention
     install_account_retention(app,db,globals(),dict(admin_required=admin_required))
     from class_reminders import install as install_class_reminders
