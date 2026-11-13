@@ -315,7 +315,7 @@ def install(app,db,m,h):
     def daily_notifications():
         secret=app.config.get('CRON_SECRET') or os.environ.get('CRON_SECRET','')
         if not secret or not hmac.compare_digest(request.headers.get('Authorization',''),'Bearer '+secret):abort(401)
-        return jsonify(class_reminders=app.extensions['class_reminders']['arm'](),reminders=due_reminders(),processed=drain(200),staff_mail=app.extensions['staff_portal']['drain']() if 'staff_portal' in app.extensions else 0)
+        return jsonify(staff_task_alerts=app.extensions['task_alerts']['arm'](),class_reminders=app.extensions['class_reminders']['arm'](),reminders=due_reminders(),processed=drain(200),staff_mail=app.extensions['staff_portal']['drain']() if 'staff_portal' in app.extensions else 0)
 
     def refresh_delivery(limit=20,force=False):
         values=service['config']('whatsapp');result_counts={'checked':0,'failed':0,'missing':0}

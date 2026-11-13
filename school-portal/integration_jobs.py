@@ -4,6 +4,7 @@ from datetime import timedelta
 from vercel.queue import Message, send, subscribe
 
 TOPIC='liontech-class-updates'
+def re_full_id(value):return len(value)==32 and all(c in '0123456789abcdef' for c in value)
 
 
 def publish(payload):
@@ -43,9 +44,23 @@ def publish_class_reminder(payload,delay):
     return asyncio.run(send(TOPIC,payload,delay=delay,retention=timedelta(days=7),idempotency_key='class-reminder-'+payload['id']))
 
 
+def _invoke_task_notice(identity):
+    from app import app
+    with app.test_request_context('/internal/staff-task-worker',method='GET'):
+        app.preprocess_request();return app.extensions['task_alerts']['process'](identity)
+
+
+def publish_task_notice(payload,delay):
+    return asyncio.run(send(TOPIC,payload,delay=delay,retention=timedelta(days=7),idempotency_key='staff-task-'+payload['id']+'-'+payload['run']))
+
+
 @subscribe(topic=TOPIC,consumer_group='liontech-integration-delivery',retry_after=60,max_concurrency=8,max_attempts=5)
 async def deliver(message:Message[dict[str,object]]) -> None:
     payload=message.payload;kind=payload.get('kind')
+    if kind=='staff_task_notice':
+        identity=payload.get('id')
+        if not isinstance(identity,str) or not re_full_id(identity):raise ValueError('Invalid staff task notice identifier.')
+        await asyncio.to_thread(_invoke_task_notice,identity);return
     if kind=='class_reminder':
         identity=payload.get('id')
         if not isinstance(identity,str) or len(identity)!=32 or any(c not in '0123456789abcdef' for c in identity):raise ValueError('Invalid class reminder identifier.')

@@ -115,4 +115,7 @@ def test_instructors_can_schedule_but_other_staff_cannot(app):
     instructor,staff=login(app,sent,iid),login(app,sent,sid)
     assert staff.get('/teaching/labs').status_code==403
     assert instructor.get('/teaching/labs').status_code==200
+    assert publish(instructor,ids['cybersecurity'],labs[ids['cybersecurity']],state='draft').status_code==403
+    from app import TeachingGrant
+    with app.app_context():db.session.add(TeachingGrant(member_id=iid,course_id=ids['cybersecurity']));db.session.commit()
     assert publish(instructor,ids['cybersecurity'],labs[ids['cybersecurity']],state='draft').status_code==200

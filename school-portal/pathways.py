@@ -71,6 +71,8 @@ def install(app,db,m,h):
     def teacher():
         staff=getattr(g,'staff',None)
         return bool(session.get('admin') or (staff and staff.active and staff.verified_at and staff.role=='instructor'))
+    def teaching_course(course_id):
+        return bool(session.get('admin') or app.extensions['lesson_teaching']['can_teach'](course_id))
     def teacher_required(fn):
         @wraps(fn)
         def wrapped(*a,**kw):
@@ -134,13 +136,13 @@ def install(app,db,m,h):
         for index,title in enumerate(stage['titles'],1):
             number=stage.get('offset',0)+index;u=units.get(number)
             lesson=u.lesson if u else None
-            sessions=app.extensions['devops']['lesson_context'](lesson,teacher())['lesson_classes'] if lesson and (data['eligible'] or teacher()) else []
+            sessions=app.extensions['devops']['lesson_context'](lesson,teaching_course(course.id))['lesson_classes'] if lesson and (data['eligible'] or teaching_course(course.id)) else []
             lessons.append(dict(number=number,week=(index+1)//2 if program=='devops' else index,title=title,lesson=lesson,sessions=sessions,released=bool(lesson and lesson.published and m['aware'](lesson.available_at)<=m['now']())))
         tab=request.args.get('tab','lessons')
         if tab not in ('lessons','resources','labs'):abort(404)
-        if tab!='lessons' and not data['eligible'] and not teacher():abort(403)
+        if tab!='lessons' and not data['eligible'] and not teaching_course(course.id):abort(403)
         published=[l['lesson'] for l in lessons if l['released']]
-        return render_template('program_level.html',program=program,program_name=name,levels=stages,data=data,lessons=lessons,tab=tab,managing=teacher(),resources=published,labs=labs_for(course,data['eligible'],teacher()),submissions={s.assessment_id:s for s in db.session.scalars(select(Submission).where(Submission.student_id==g.student.id))} if g.student else {})
+        return render_template('program_level.html',program=program,program_name=name,levels=stages,data=data,lessons=lessons,tab=tab,managing=teaching_course(course.id),resources=published,labs=labs_for(course,data['eligible'],teaching_course(course.id)),submissions={s.assessment_id:s for s in db.session.scalars(select(Submission).where(Submission.student_id==g.student.id))} if g.student else {})
     @app.route('/programs/<program>/<level>/enroll',methods=['GET','POST'])
     def level_enroll(program,level):
         name,_,stage=definition(program,level);data=context(stage);course=data['course']
@@ -164,7 +166,8 @@ def install(app,db,m,h):
     @app.get('/teaching/labs')
     @teacher_required
     def teaching_labs():
-        courses=db.session.scalars(select(Course).where(Course.slug.in_([s['slug'] for _,stages in PROGRAMS.values() for s in stages]))).all()
+        courses=[c for c in db.session.scalars(select(Course).where(Course.slug.in_([s['slug'] for _,stages in PROGRAMS.values() for s in stages]))) if teaching_course(c.id)]
+        if not courses:return render_template('teaching_labs.html',courses=[],selected_id=0,labs=[],assessments=[],cohorts=[],admin_view='materials')
         cid=request.args.get('course_id',type=int) or next((c.id for c in courses if c.slug=='cybersecurity'),0)
         if cid not in [c.id for c in courses]:abort(404)
         labs=db.session.scalars(select(Lab).where(Lab.course_id==cid).order_by(Lab.number)).all()
@@ -180,6 +183,7 @@ def install(app,db,m,h):
     def teaching_lab_save():
         try:
             cid=int(request.form.get('course_id','0'));course=db.get_or_404(Course,cid)
+            if not teaching_course(cid):abort(403)
             if course.slug not in [s['slug'] for _,stages in PROGRAMS.values() for s in stages]:abort(404)
             lab=db.get_or_404(Lab,int(request.form['lab_id'])) if request.form.get('lab_id') else None
             if lab and lab.course_id!=cid:abort(403)
@@ -220,6 +224,7 @@ def install(app,db,m,h):
     @teacher_required
     def teaching_lab_reviews(lab_id):
         lab=db.get_or_404(Lab,lab_id)
+        if not teaching_course(lab.course_id):abort(403)
         if request.method=='POST':
             try:
                 item=db.get_or_404(Submission,int(request.form.get('submission_id','0')))
@@ -271,7 +276,7 @@ def install(app,db,m,h):
     @app.get('/labs/evidence/<evidence_id>')
     def lab_evidence(evidence_id):
         e=db.get_or_404(m['LabEvidence'],evidence_id)
-        if not teacher() and (not g.student or e.submission.student_id!=g.student.id or not eligible(e.submission.assessment.course)):abort(403)
+        if not teaching_course(e.submission.assessment.course_id) and (not g.student or e.submission.student_id!=g.student.id or not eligible(e.submission.assessment.course)):abort(403)
         return Response(app.config['FILE_STORAGE'].get(e.pathname),mimetype='application/octet-stream',headers={'Content-Disposition':'attachment; filename="'+e.filename+'"','X-Content-Type-Options':'nosniff'})
     def assessment_visible(a):
         lab=db.session.scalar(select(Lab).where(Lab.assessment_id==a.id))

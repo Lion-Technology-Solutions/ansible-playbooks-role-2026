@@ -75,7 +75,10 @@ def install(app,db,m,h):
         student=db.get_or_404(Student,row.student_id)
         row.expires_at=now()+timedelta(hours=4)
         next_class=session.get('next_class_id')
-        session.clear();session.update(student_id=student.id,student_auth=stamp(student),auth_session=token);session.permanent=True
+        linked_context=session.get('linked_profiles')
+        session.clear()
+        if linked_context:session['linked_profiles']=linked_context
+        session.update(student_id=student.id,student_auth=stamp(student),auth_session=token);session.permanent=True
         enrollment=db.session.get(m['Enrollment'],row.next_enrollment_id) if row.next_enrollment_id else None
         destination=url_for('global_payment',enrollment_id=enrollment.id) if enrollment and enrollment.student_id==student.id else url_for('portal')
         if isinstance(next_class,int) and next_class>0:destination=url_for('class_access',class_id=next_class)
@@ -93,7 +96,9 @@ def install(app,db,m,h):
         p=profile(student);token=secrets.token_urlsafe(32)
         row=Login(digest=digest(token),student_id=student.id,stamp=stamp(student),version=p.security_version,expires_at=now()+timedelta(minutes=15),next_enrollment_id=next_enrollment)
         next_class=session.get('next_class_id')
-        db.session.add(row);db.session.commit();session.clear();session['pending_auth']=token;session['csrf']=secrets.token_hex(24)
+        db.session.add(row);db.session.commit();linked_context=session.get('linked_profiles');session.clear();
+        if linked_context:session['linked_profiles']=linked_context
+        session['pending_auth']=token;session['csrf']=secrets.token_hex(24)
         if isinstance(next_class,int) and next_class>0:session['next_class_id']=next_class
         if send_verification and needs_email(student):
             try:send_verification_email(student,row)
@@ -302,13 +307,12 @@ def install(app,db,m,h):
         student,row=actor();p=profile(student)
         codes=None
         if request.method=='POST':
+            if request.form.get('action')=='username':abort(403,'Only an administrator can change usernames. Contact support to request a correction.')
             limit('security-manage:'+student.id,15)
             try:
                 manage_allowed(student,row);action=request.form.get('action')
                 if action=='username':
-                    username=request.form.get('username','').strip().casefold()
-                    if not re.fullmatch(r'[a-z0-9_][a-z0-9_.-]{2,39}',username) or re.match(r'lt-\d',username):raise ValueError('Choose a valid 3–40 character username. Student numbers are reserved.')
-                    p.username=username;audit('username_changed');db.session.commit();flash('Username updated.')
+                    abort(403,'Only an administrator can change usernames. Contact support to request a correction.')
                 elif action=='totp_start':
                     secret=pyotp.random_base32();record,_=challenge(student,'totp_setup',row.digest,{'secret':secret},10);session['totp_setup']=record.id
                     return redirect(url_for('totp_setup'))
@@ -576,4 +580,4 @@ def install(app,db,m,h):
         if request.endpoint in ('reset_password','forgot_password','verify_email','totp_setup','totp_qr','social_callback','security_account','mfa_challenge','security_settings','passkey_verify'):
             response.headers['Referrer-Policy']='no-referrer';response.headers['Cache-Control']='no-store'
         return response
-    return dict(registration_limit=lambda:limit('signup-ip:'+client_address(),20,60),new_profile=new_profile,begin=begin,password_login=password_login,process_mail=process_mail,policy=policy,profile=profile,due=due,social_exchange=social_exchange,send_mail=queue_mail,limit=limit,actor=actor,challenge=challenge,load_challenge=load_challenge)
+    return dict(registration_limit=lambda:limit('signup-ip:'+client_address(),20,60),new_profile=new_profile,begin=begin,password_login=password_login,process_mail=process_mail,policy=policy,profile=profile,due=due,social_exchange=social_exchange,send_mail=queue_mail,limit=limit,actor=actor,challenge=challenge,load_challenge=load_challenge,current=current,valid_login=valid_login)
