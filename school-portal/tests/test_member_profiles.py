@@ -169,3 +169,15 @@ def test_existing_student_accepts_own_linked_staff_invitation_without_signing_ou
     assert result.status_code==200
     with student.session_transaction() as data:assert data.get('staff_id') and not data.get('student_id') and data.get('portal_session')
     assert student.get('/staff').status_code==200
+
+
+def test_separate_student_contact_numbers_apply_to_existing_directory_links(app):
+    manager,sent=setup(app);student=app.test_client();register(student)
+    with app.app_context():student_id=db.session.scalar(select(Student.id))
+    assert post(student,'/account/contact',page='/account/contact',phone='+15555555551',whatsapp='+15555555552').status_code==200
+    page=manager.get('/admin?view=students&student='+student_id)
+    assert page.status_code==200 and b'wa.me/15555555552' in page.data and b'tel:+15555555551' in page.data
+    assert b'wa.me/15555555551' not in page.data
+    assert post(student,'/account/contact',page='/account/contact',phone='+15555555551',whatsapp='').status_code==200
+    page=manager.get('/admin?view=students&student='+student_id)
+    assert b'wa.me/15555555551' not in page.data and b'wa.me/15555555552' not in page.data

@@ -55,7 +55,7 @@ def install(app,db,m):
                 row.phone=direct;row.whatsapp=whatsapp;row.task_alerts=enabled
                 row.consented_at=m['now']() if enabled and (changed or not row.consented_at) else row.consented_at if enabled else None
                 row.updated_at=m['now']();db.session.add(row)
-                if g.student:g.student.phone=direct or whatsapp or g.student.phone
+                if g.student:g.student.phone=whatsapp or direct or g.student.phone
                 db.session.add(m['StaffAudit'](actor=identity,member_id=g.staff.id if g.staff else None,action='contact_preferences_updated',detail='Operational contact and task alert preferences updated.'))
                 db.session.commit();g.task_alert_dirty=True;flash('Contact details saved.');return redirect(request.path)
             except ValueError as error:flash(str(error))
