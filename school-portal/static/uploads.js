@@ -27,14 +27,14 @@ if(uploadForm){
           const data=file.slice(part*upload.chunk_size,Math.min(file.size,(part+1)*upload.chunk_size));
           let lastError;
           for(let attempt=0;attempt<3;attempt++){
-            try{await checked(await fetch('/admin/assets/'+upload.id+'/chunks/'+part,{method:'POST',headers:{...headers,'Content-Type':'application/octet-stream'},body:data}));lastError=null;break;}
+            try{await checked(await fetch((uploadForm.dataset.assetBase||'/admin/assets')+'/'+upload.id+'/chunks/'+part,{method:'POST',headers:{...headers,'Content-Type':'application/octet-stream'},body:data}));lastError=null;break;}
             catch(error){lastError=error;if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1000*(attempt+1)));}
           }
           if(lastError)throw lastError;
           finished+=data.size;progress.value=total?Math.round(finished/total*100):0;
           status.textContent='Uploading '+file.name+' · '+progress.value+'% overall';
         }
-        await checked(await fetch('/admin/assets/'+upload.id+'/finish',{method:'POST',headers}));
+        await checked(await fetch((uploadForm.dataset.assetBase||'/admin/assets')+'/'+upload.id+'/finish',{method:'POST',headers}));
       }
       status.textContent='Upload complete. Opening your library…';window.location.reload();
     }catch(error){status.textContent=error.message+' Completed files remain in your library. Archive incomplete entries before starting again.';}

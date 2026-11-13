@@ -236,7 +236,7 @@ def install(app,db,m,h):
         if task.member_id!=g.staff.id:abort(403)
         status=request.form.get('status');result=request.form.get('result','').strip()
         if status not in ('assigned','in_progress','completed') or len(result)>5000 or (status=='completed' and not result):abort(400,'Record the outcome before marking a task completed.')
-        task.status=status;task.result=result;task.updated_at=now();audit('task_'+status,g.staff,'Task '+str(task.id));db.session.commit();return redirect(url_for('staff_tasks'))
+        task.status=status;task.result=result;task.updated_at=now();audit('task_'+status,g.staff,'Task '+str(task.id));db.session.commit();return redirect(url_for('staff_workboard') if db.session.get(m['TaskRecord'],task.id) else url_for('staff_tasks'))
     @app.route('/staff/reports',methods=['GET','POST'])
     @member_required
     def staff_reports():
@@ -399,4 +399,4 @@ def install(app,db,m,h):
     def headers(response):
         if request.path.startswith(('/staff','/admin/team')):response.headers['Referrer-Policy']='no-referrer';response.headers['Cache-Control']='no-store'
         return response
-    app.extensions['staff_portal']=dict(drain=drain,process_mail=process_mail,can=can,scoped=scoped)
+    app.extensions['staff_portal']=dict(drain=drain,process_mail=process_mail,can=can,scoped=scoped,mail=mail,dispatch=dispatch)
