@@ -60,6 +60,9 @@ def install(app,db,m,h):
         elif data.get('challenge'):
             challenge=db.session.get(Challenge,data['challenge']);valid=bool(challenge and not challenge.used and challenge.attempts<5 and aware(challenge.expires_at)>now() and recipient and challenge.revision==recipient.revision)
         elif recipient:valid=recipient.active and bool(recipient.verified_at)
+        if data.get('task_notice'):
+            notice=db.session.get(m['StaffTaskNotice'],data['task_notice']);task=db.session.get(Task,notice.task_id) if notice else None;state=db.session.get(m['TaskAlertState'],notice.task_id) if notice else None
+            valid=bool(valid and notice and task and state and state.revision==notice.revision and task.member_id==notice.member_id and (task.status=='completed' if notice.kind=='submitted' else task.status!='completed'))
         if not valid:row.status='cancelled';row.ciphertext='';db.session.commit();return
         row.attempts+=1
         try:
@@ -114,13 +117,20 @@ def install(app,db,m,h):
         return row.id
     @app.route('/staff/invitations/<token>',methods=['GET','POST'])
     def staff_accept(token):
-        if session.get('admin') or getattr(g,'staff',None) or g.student:abort(400,'Sign out before accepting a staff invitation.')
         inv=invite_row(token);member=db.session.get(Member,inv.member_id)
+        current_student=getattr(g,'student',None)
+        student_person=app.extensions['member_profiles']['person']('student:'+current_student.id) if current_student else None
+        staff_person=app.extensions['member_profiles']['person']('staff:'+str(member.id))
+        own_linked_invitation=bool(student_person and staff_person and student_person.id==staff_person.id)
+        if session.get('admin') or getattr(g,'staff',None) or (g.student and not own_linked_invitation):abort(400,'Sign out before accepting a staff invitation for another identity.')
         if request.method=='POST':
             if request.form.get('action')=='code':issue_code(member,'accept',inv.id);flash('A verification code was requested for your invited work email.');return redirect(request.path)
             member=consume_code('accept',inv.id)
             if request.form.get('policy_acknowledged')!='yes' or request.form.get('policy_version')!=POLICY_VERSION:abort(400,'Accept the current terms and privacy policy before activating your account.')
-            member.password_hash=password();member.policy_version=POLICY_VERSION;member.policy_accepted_at=now();member.active=True;member.verified_at=now();inv.used=True;audit('invitation_accepted',member);db.session.commit();start_session(member);return redirect(url_for('staff_home'))
+            member.password_hash=password();member.policy_version=POLICY_VERSION;member.policy_accepted_at=now();member.active=True;member.verified_at=now();inv.used=True;audit('invitation_accepted',member);db.session.commit()
+            old_activity=app.extensions['profile_sessions']['record']()
+            if old_activity:old_activity.revoked=True;db.session.commit()
+            start_session(member);g.portal_actor_before=None;return redirect(url_for('staff_home'))
         return render_template('staff_auth.html',mode='accept',member=member,policy_version=POLICY_VERSION)
     @app.route('/staff/sign-in',methods=['GET','POST'])
     def staff_login():
@@ -129,6 +139,8 @@ def install(app,db,m,h):
         if request.method=='POST':
             limit('staff-login:'+str(request.remote_addr),10,15);identity=request.form.get('identity','').strip().casefold()[:254];limit('staff-identity:'+identity[:254],20,15)
             member=db.session.scalar(select(Member).where(Member.email==identity))
+            handle=db.session.scalar(select(m['ProfileHandle']).where(m['ProfileHandle'].username==identity))
+            if not member and handle and handle.owner.startswith('staff:'):member=db.session.get(Member,int(handle.owner.split(':')[1]))
             number=identity[8:]
             if identity.upper().startswith('LTA-STF-') and number.isascii() and number.isdigit() and len(number)<=10 and 0<int(number)<=2147483647:member=db.session.get(Member,int(number))
             if not member or not member.active or not member.verified_at or not check_password_hash(member.password_hash,request.form.get('password','')[:129]):
@@ -227,15 +239,17 @@ def install(app,db,m,h):
             if not 1<=len(title)<=160 or len(description)>5000 or priority not in ('normal','high','urgent'):abort(400)
             try:due=date.fromisoformat(request.form.get('due_on',''))
             except ValueError:abort(400,'Choose a due date.')
-            task=Task(member_id=target.id,title=title,description=description,due_on=due,priority=priority);db.session.add(task);db.session.flush();audit('task_assigned',target,'Task '+str(task.id));row=mail(target,'task','task:'+str(task.id),target.email,'New LionTech staff task',f'{task.title}\nDue: {task.due_on}\nView your assigned task: {ORIGIN}/staff/tasks');db.session.commit();dispatch([row.id]);return redirect(url_for('staff_tasks'))
+            task=Task(member_id=target.id,title=title,description=description,due_on=due,priority=priority);db.session.add(task);db.session.flush();app.extensions['task_alerts']['assigned'](task);audit('task_assigned',target,'Task '+str(task.id));row=mail(target,'task','task:'+str(task.id),target.email,'New LionTech staff task',f'{task.title}\nDue: {task.due_on}\nView your assigned task: {ORIGIN}/staff/tasks');db.session.commit();dispatch([row.id]);return redirect(url_for('staff_tasks'))
         return render_template('staff_tasks.html',people=people,tasks=list(db.session.scalars(select(Task).where(Task.member_id.in_([s.id for s in people])).order_by(Task.due_on))))
     @app.post('/staff/tasks/<int:task_id>')
     @member_required
     def staff_task_update(task_id):
-        task=db.get_or_404(Task,task_id)
+        task=db.session.scalar(select(Task).where(Task.id==task_id).with_for_update())
+        if not task:abort(404)
         if task.member_id!=g.staff.id:abort(403)
-        status=request.form.get('status');result=request.form.get('result','').strip()
+        status='completed' if request.form.get('action')=='submit_task' else request.form.get('status');result=request.form.get('result','').strip()
         if status not in ('assigned','in_progress','completed') or len(result)>5000 or (status=='completed' and not result):abort(400,'Record the outcome before marking a task completed.')
+        if status=='completed' and task.status!='completed':app.extensions['task_alerts']['submitted'](task)
         task.status=status;task.result=result;task.updated_at=now();audit('task_'+status,g.staff,'Task '+str(task.id));db.session.commit();return redirect(url_for('staff_workboard') if db.session.get(m['TaskRecord'],task.id) else url_for('staff_tasks'))
     @app.route('/staff/reports',methods=['GET','POST'])
     @member_required
@@ -399,4 +413,4 @@ def install(app,db,m,h):
     def headers(response):
         if request.path.startswith(('/staff','/admin/team')):response.headers['Referrer-Policy']='no-referrer';response.headers['Cache-Control']='no-store'
         return response
-    app.extensions['staff_portal']=dict(drain=drain,process_mail=process_mail,can=can,scoped=scoped,mail=mail,dispatch=dispatch)
+    app.extensions['staff_portal']=dict(drain=drain,process_mail=process_mail,can=can,scoped=scoped,mail=mail,dispatch=dispatch,issue_code=issue_code,consume_code=consume_code,create_invitation=create_invitation)

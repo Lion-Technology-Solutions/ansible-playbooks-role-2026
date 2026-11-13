@@ -31,7 +31,8 @@ def install(app,db,m,h):
         row=db.session.get(Control,student.id)
         return not db.session.get(Archive,student.id) and (not row or row.active)
     def whatsapp(student):
-        phone=re.sub(r'[\s()\-]','',student.phone)
+        contact=db.session.get(m['MemberContact'],'student:'+student.id)
+        phone=contact.whatsapp if contact else re.sub(r'[\s()\-]','',student.phone)
         if not re.fullmatch(r'\+[1-9][0-9]{6,14}',phone):return ''
         return 'https://wa.me/'+phone[1:]+'?'+urlencode({'text':f'Hello {student.name}, this is LionTech Academy regarding your enrollment. Student number: {student.student_number}. Please review your portal: {ORIGIN}/enrollments'})
     def change(enrollment,new_status,reason,source='admin',grant=True):

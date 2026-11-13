@@ -44,20 +44,24 @@ def install(app,db,m,guards):
     Lesson, Grant, Upload, Media, Asset, File=(m[k] for k in ('Lesson','TeachingGrant','TeachingUpload','LessonMedia','Asset','LessonFile'))
     def can_teach(course_id):
         member=getattr(g,'staff',None)
-        return bool(session.get('admin') or (member and member.active and member.verified_at and member.role=='instructor' and db.session.get(Grant,(member.id,course_id))))
+        return bool(member and member.active and member.verified_at and member.role=='instructor' and db.session.get(Grant,(member.id,course_id)))
     def lesson_for(identity):
         lesson=db.get_or_404(Lesson,identity)
         if not can_teach(lesson.course_id):abort(403)
         return lesson
     def audit(action,lesson):
         db.session.add(m['StaffAudit'](actor='admin:1' if session.get('admin') else 'staff:'+str(g.staff.id),member_id=g.staff.id if g.staff else None,action=action,detail='Lesson '+str(lesson.id)))
+    def instructor_profile(member):
+        if member.role=='instructor':return True
+        p=app.extensions['member_profiles']['person']('staff:'+str(member.id))
+        return app.extensions['member_profiles']['extra'](p,'instructor')
     @app.route('/staff/teaching',methods=['GET','POST'])
     def staff_teaching():
         if not session.get('admin') and not getattr(g,'staff',None):abort(403)
         if request.method=='POST':
             if not session.get('admin'):abort(403)
             member=db.get_or_404(m['StaffMember'],request.form.get('member_id',type=int));course=db.get_or_404(m['Course'],request.form.get('course_id',type=int))
-            if member.role!='instructor' or not member.active or not member.verified_at:abort(400,'Select an active, verified instructor.')
+            if not instructor_profile(member) or not member.active or not member.verified_at:abort(400,'Select an active, verified instructor.')
             grant=db.session.get(Grant,(member.id,course.id))
             if request.form.get('action')=='revoke':
                 if grant:db.session.delete(grant)
@@ -65,8 +69,8 @@ def install(app,db,m,guards):
                 if not grant:db.session.add(Grant(member_id=member.id,course_id=course.id))
             else:abort(400)
             db.session.add(m['StaffAudit'](actor='admin:1',member_id=member.id,action='teaching_access_'+request.form['action'],detail='Course '+str(course.id)));db.session.commit();return redirect(url_for('staff_teaching'))
-        lessons=[l for l in db.session.scalars(select(Lesson).order_by(Lesson.course_id,Lesson.position)) if can_teach(l.course_id)]
-        return render_template('staff_teaching.html',lessons=lessons,courses=list(db.session.scalars(select(m['Course']))),instructors=list(db.session.scalars(select(m['StaffMember']).where(m['StaffMember'].role=='instructor'))),grants=list(db.session.scalars(select(Grant))) if session.get('admin') else [])
+        lessons=[l for l in db.session.scalars(select(Lesson).order_by(Lesson.course_id,Lesson.position)) if session.get('admin') or can_teach(l.course_id)]
+        return render_template('staff_teaching.html',lessons=lessons,courses=list(db.session.scalars(select(m['Course']))),instructors=[member for member in db.session.scalars(select(m['StaffMember'])) if instructor_profile(member)],grants=list(db.session.scalars(select(Grant))) if session.get('admin') else [])
     @app.route('/staff/teaching/lessons/<int:lesson_id>',methods=['GET','POST'])
     def staff_lesson_studio(lesson_id):
         lesson=lesson_for(lesson_id)

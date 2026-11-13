@@ -74,7 +74,7 @@ def install(app,db,m,h):
         Attempt=m['LoginAttempt'];attempt=db.session.get(Attempt,key)
         if attempt and aware(attempt.last_at)<now()-timedelta(minutes=15):attempt.attempts=0
         if attempt and attempt.attempts>=10:abort(429,'Too many confirmation attempts. Try again in 15 minutes.')
-        valid=app.extensions['admin_security']['check'](request.form.get('admin_password',''))
+        valid=app.extensions.get('member_profiles',{}).get('confirmation_password',app.extensions['admin_security']['check'])(request.form.get('admin_password',''))
         if not valid:
             if not attempt:attempt=Attempt(key=key,attempts=0);db.session.add(attempt)
             attempt.attempts+=1;attempt.last_at=now();db.session.commit()

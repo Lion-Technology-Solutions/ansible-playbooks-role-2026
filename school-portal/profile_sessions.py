@@ -1,7 +1,7 @@
 """Server-enforced idle sessions and isolated administrator role previews."""
 import hashlib
 import secrets
-from datetime import timedelta
+from datetime import datetime,timedelta,timezone
 from flask import abort, g, jsonify, redirect, render_template, request, session, url_for
 from sqlalchemy import select, update
 
@@ -65,7 +65,7 @@ def install(app, db, m):
             row.last_active_at=instant;db.session.commit()
         mode=session.get('role_preview')
         if mode and request.endpoint not in ('role_preview','role_switcher','role_switch','role_preview_exit',
-                'session_status','session_activity','session_end','logout','profile_picture','branding_css','brand_image','static','health'):
+                'member_profile_switcher','session_status','session_activity','session_end','logout','profile_picture','branding_css','brand_image','static','health'):
             if request.method not in ('GET','HEAD'):
                 return jsonify(error='Live changes are disabled in role preview. Return to Admin first.'),403
             return redirect(url_for('role_preview',role=mode))
@@ -73,10 +73,10 @@ def install(app, db, m):
     def establish(response):
         current=actor()
         # Authentication handlers clear the old session; issue a fresh server-side activity nonce.
-        if current and not session.get('portal_session') and not getattr(g,'portal_actor_before',None) and response.status_code<400:
+        if current and not session.get('portal_session') and (not getattr(g,'portal_actor_before',None) or session.get('linked_profiles')) and response.status_code<400:
             token=secrets.token_urlsafe(32);instant=clock()
             row=Activity(digest=digest(token),actor=current,channel=secrets.token_hex(12),
-                last_active_at=instant,absolute_expires_at=instant+timedelta(hours=4),revoked=False)
+                last_active_at=instant,absolute_expires_at=min(instant+timedelta(hours=4),datetime.fromtimestamp(session['linked_profiles']['expires'],timezone.utc)) if session.get('linked_profiles') else instant+timedelta(hours=4),revoked=False)
             db.session.add(row);db.session.commit();session['portal_session']=token
         return response
     def status():
@@ -85,7 +85,7 @@ def install(app, db, m):
             return jsonify(authenticated=False,login_url=url_for('login')),401
         expires=min(m['aware'](row.last_active_at)+timedelta(minutes=15),m['aware'](row.absolute_expires_at))
         return jsonify(authenticated=True,expires_at=expires.isoformat(),server_now=clock().isoformat(),channel=row.channel,
-            login_url=url_for(login_endpoint(actor())),warning_seconds=60)
+            login_url=url_for(login_endpoint(actor())),warning_seconds=60,profile_switch_url=url_for('member_profile_switcher') if session.get('linked_profiles') else '')
     @app.get('/session/status')
     def session_status():
         return status()
@@ -147,4 +147,4 @@ def install(app, db, m):
         current=actor();row=(getattr(g,'portal_activity',None) or record()) if current else None
         return dict(preview_role=session.get('role_preview'),preview_role_name=ROLES.get(session.get('role_preview'),{}).get('name'),
             session_activity_enabled=bool(current),session_channel=row.channel if row else '',session_login_url=url_for(login_endpoint(current)))
-    app.extensions['profile_sessions']=dict(guard=guard,end=end,roles=ROLES)
+    app.extensions['profile_sessions']=dict(guard=guard,end=end,roles=ROLES,record=record)

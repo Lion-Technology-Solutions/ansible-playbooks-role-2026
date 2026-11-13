@@ -59,7 +59,7 @@ def install(app, db, m, guards):
             for enrollment,student in records:
                 student=student or enrollment.student
                 task=Task(member_id=target.id,title=title,description=instructions,due_on=due,priority=priority)
-                db.session.add(task); db.session.flush()
+                db.session.add(task); db.session.flush();app.extensions['task_alerts']['assigned'](task)
                 deliveries.append(app.extensions['staff_portal']['mail'](target,'task','task:'+str(task.id),target.email,'New LionTech staff task',f'{title}\nDue: {due}\nView your assigned task in the portal: https://www.liontechacademy.com/staff/workboard').id)
                 db.session.add(Link(task_id=task.id,enrollment_id=enrollment.id if enrollment else None,student_id=student.id,kind=kind))
                 db.session.add(Audit(actor=actor(),member_id=target.id,action='record_task_assigned',detail=f'Task {task.id}; {kind}; student {student.id}'))
@@ -82,9 +82,11 @@ def install(app, db, m, guards):
     @app.post('/admin/team/tasks/<int:task_id>/reassign')
     @guards['admin_required']
     def staff_task_reassign(task_id):
-        task=db.get_or_404(Task,task_id);target=db.get_or_404(Member,request.form.get('member_id',type=int))
+        task=db.session.scalar(select(Task).where(Task.id==task_id).with_for_update())
+        if not task:abort(404)
+        target=db.get_or_404(Member,request.form.get('member_id',type=int))
         if not target.active or not target.verified_at:abort(400)
-        previous=task.member_id;task.member_id=target.id;task.updated_at=m['now']()
+        previous=task.member_id;task.member_id=target.id;task.updated_at=m['now']();app.extensions['task_alerts']['assigned'](task)
         db.session.add(Audit(actor=actor(),member_id=target.id,action='task_reassigned',detail=f'Task {task.id}; previous staff {previous}'));db.session.commit()
         return redirect(url_for('staff_workboard'))
     @app.get('/staff/people/<int:member_id>/reports')

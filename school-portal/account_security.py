@@ -70,7 +70,7 @@ def install(app,db,m,h):
 
     @app.context_processor
     def profile_context():
-        return dict(admin_display_name=(db.session.get(Admin,1).name if session.get('admin') and db.session.get(Admin,1) else 'Administrator'),has_picture=lambda owner:bool(db.session.get(Picture,owner)),student_active=lambda student:not (db.session.get(Control,student.id) and not db.session.get(Control,student.id).active))
+        return dict(admin_display_name=(g.member_person.name if getattr(g,'linked_admin',None) and getattr(g,'member_person',None) else db.session.get(Admin,1).name if session.get('admin') and db.session.get(Admin,1) else 'Administrator'),has_picture=lambda owner:bool(db.session.get(Picture,owner)),student_active=lambda student:not (db.session.get(Control,student.id) and not db.session.get(Control,student.id).active))
 
     @app.get('/account/picture/<kind>/<identity>')
     def profile_picture(kind,identity):
@@ -91,11 +91,14 @@ def install(app,db,m,h):
                 if email!=student.email:
                     auth['limit']('profile-email:'+student.id,3,15)
                     if db.session.scalar(select(Student.id).where(Student.email==email)):raise ValueError('This email cannot be used. Choose another address or contact support.')
-                avatar('student:'+student.id);student.name=name;db.session.commit()
+
+                if name!=student.name:abort(403,'Only an administrator can change your name. Contact support to request a correction.')
+                avatar('student:'+student.id);db.session.commit()
                 if email!=student.email:
                     send_profile_code(student,login,dict(old_email=student.email,new_email=email,stage='old'))
                     flash('Confirm the code sent to your current email first. We will then verify your new address.');return redirect(url_for('profile_email_verify'))
                 flash('Your profile has been updated.')
+            except HTTPException:raise
             except (ValueError,IntegrityError) as error:db.session.rollback();flash(str(error) if isinstance(error,ValueError) else 'Those profile details could not be saved.')
             except Exception:db.session.rollback();flash('The profile update or verification email could not be completed. Please retry.')
         return render_template('student_profile.html',student=student)
@@ -131,6 +134,7 @@ def install(app,db,m,h):
     @app.route('/admin/profile',methods=['GET','POST'])
     @h['admin_required']
     def admin_profile():
+        if getattr(g,'linked_admin',None):return redirect(url_for('staff_profile') if g.staff else url_for('member_contact'))
         row=state()
         if request.method=='POST':
             try:
@@ -139,7 +143,9 @@ def install(app,db,m,h):
                     flash('Enter the code sent to your registered administrator email. Your password has not changed yet.');return redirect(url_for('admin_password_verify'))
                 name=request.form.get('name','').strip()
                 if not 1<=len(name)<=100:raise ValueError('Enter an administrator display name.')
-                avatar('admin:1');row.name=name;db.session.commit();flash('Administrator profile updated.')
+                avatar('admin:1')
+                if row.name!=name:app.extensions['member_profiles']['rename']('admin:1',name)
+                row.name=name;db.session.commit();flash('Administrator profile updated.')
             except ValueError as error:db.session.rollback();flash(str(error))
             except HTTPException:raise
             except Exception:db.session.rollback();flash('The update or verification email could not be completed. Please retry.')
@@ -158,6 +164,7 @@ def install(app,db,m,h):
 
     @app.route('/admin/password/verify',methods=['GET','POST'])
     def admin_password_verify():
+        if getattr(g,'linked_admin',None):abort(403,'Manage your own staff security credentials from your staff profile.')
         purpose=session.get('admin_challenge_purpose');reset=purpose=='admin_password_reset'
         if purpose not in ('admin_password_change','admin_password_reset'):return redirect(url_for('admin_forgot_password'))
         if not reset and not session.get('admin'):return redirect(url_for('admin_login'))

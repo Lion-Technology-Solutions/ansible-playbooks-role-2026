@@ -75,7 +75,7 @@ def test_chunk_retry_integrity_complete_ranges_and_head(app):
     manager,student,course,cohort=setup(app)
     token=csrf(manager,'/admin')
     data=b'A'*CHUNK_SIZE+b'BCDEFGH'
-    r=manager.post('/admin/assets/start',data={'csrf':token,'filename':'clip.mp4','size':len(data),'purpose':'lesson'})
+    r=manager.post('/admin/assets/start',data={'csrf':token,'filename':'clip.mp3','size':len(data),'purpose':'lesson'})
     aid=r.json['id']
     url=f'/admin/assets/{aid}/chunks/0'
     headers={'X-CSRF-Token':token,'Content-Type':'application/octet-stream'}
@@ -183,10 +183,20 @@ def test_file_library_rename_and_media_embeds(app):
     manager,student,course,cohort=setup(app)
     approve(app,student,manager,course,cohort)
     image=upload(manager,'Diagram.png',png())
-    video=upload(manager,'Demo.webm',b'webm video sample')
     audio=upload(manager,'Lecture.mp3',b'mp3 audio sample')
-    create_lesson(manager,course,[image,video,audio])
+    create_lesson(manager,course,[image,audio])
     with app.app_context():lid=db.session.scalar(select(Lesson.id).where(Lesson.course_id==course))
+    from cryptography.fernet import Fernet
+    from test_staff_portal import create,login
+    from app import TeachingGrant
+    sent=[];app.config.update(INTEGRATIONS_ENCRYPTION_KEY=Fernet.generate_key().decode(),STAFF_MAIL_SENDER=lambda payload:sent.append(payload))
+    teacher_id=create(app,'VideoTeacher','instructor')
+    with app.app_context():db.session.add(TeachingGrant(member_id=teacher_id,course_id=course));db.session.commit()
+    teacher=login(app,sent,teacher_id);root=f'/staff/teaching/lessons/{lid}/assets';token=csrf(teacher,'/staff')
+    result=teacher.post(root+'/start',data={'csrf':token,'filename':'Demo.webm','size':17,'purpose':'lesson'});assert result.status_code==200
+    video=result.json['id']
+    assert teacher.post(root+'/'+video+'/chunks/0',data=b'webm video sample',headers={'X-CSRF-Token':token,'Content-Type':'application/octet-stream'}).status_code==200
+    assert teacher.post(root+'/'+video+'/finish',data={'csrf':token}).status_code==200
     page=student.get(f'/lessons/{lid}')
     assert b'<video' in page.data and b'<audio' in page.data and b'lesson-image' in page.data
     token=csrf(manager,'/admin')

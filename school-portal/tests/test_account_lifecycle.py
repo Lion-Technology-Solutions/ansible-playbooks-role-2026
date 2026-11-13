@@ -63,6 +63,10 @@ def test_access_revocation_payment_and_approval_events_are_transactional(app):
 
 def test_profile_name_private_avatar_and_email_change_verifies_both_addresses(app):
     manager,student=setup(app);app.config['FILE_STORAGE']=MemoryStorage();register(student);activate(app,student);sid=student_id(app)
+    denied=student.post('/account/profile',data={'csrf':csrf(student,'/account/profile'),'name':'Unauthorized rename','email':'student@example.com'})
+    assert denied.status_code==403
+    from test_member_profiles import admin_change
+    assert admin_change(manager,'student:'+sid,'identity',name='Updated Student').status_code==200
     result=student.post('/account/profile',data={'csrf':csrf(student,'/account/profile'),'name':'Updated Student','email':'student@example.com','picture':(io.BytesIO(png()),'avatar.png')},content_type='multipart/form-data',follow_redirects=True)
     assert result.status_code==200 and b'Your profile has been updated' in result.data
     with app.app_context():

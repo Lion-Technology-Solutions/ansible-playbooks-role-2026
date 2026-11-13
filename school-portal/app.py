@@ -1101,6 +1101,12 @@ from team_workflows import define as define_team_workflows
 globals().update(define_team_workflows(db,now))
 from lesson_teaching import define as define_lesson_teaching
 globals().update(define_lesson_teaching(db))
+from member_contacts import define as define_member_contacts
+globals().update(define_member_contacts(db,now))
+from task_alerts import define as define_task_alerts
+globals().update(define_task_alerts(db,now))
+from member_profiles import define as define_member_profiles
+globals().update(define_member_profiles(db))
 
 def create_app(config=None):
     app = Flask(__name__)
@@ -1170,6 +1176,9 @@ def create_app(config=None):
             admin_token = app.extensions['admin_security']['stamp']()
             if not hmac.compare_digest(admin_token.encode(), session.get('admin_auth', '').encode()):
                 session.clear()
+        if 'member_profiles' in app.extensions:
+            linked_result=app.extensions['member_profiles']['guard']()
+            if linked_result is not None:return linked_result
         if request.endpoint not in ('static','health','stripe_webhook','flutterwave_webhook','chatgpt_context','chatgpt_draft','chatgpt_apply'):
             result=app.extensions['profile_sessions']['guard']()
             if result is not None:return result
@@ -1458,6 +1467,7 @@ def create_app(config=None):
         try:
             size=int(field('size',20))
             name,mime=validate_upload(field('filename',250),size,field('purpose',15))
+            if mime.startswith('video/') and not (g.staff and g.staff.role=='instructor'):abort(403,'Switch to an assigned Instructor profile to upload lesson videos.')
             asset=Asset(title=name,filename=name,mime=mime,size=size,purpose=request.form['purpose'])
             db.session.add(asset)
             db.session.commit()
@@ -1724,7 +1734,8 @@ def create_app(config=None):
                 flash('Too many sign-in attempts. Try again in 15 minutes.')
                 return render_template('login.html', admin=True), 429
             password = request.form.get('password', '')
-            if hmac.compare_digest(request.form.get('username', '').encode(), b'admin') and app.extensions['admin_security']['check'](password):
+            admin_handle=db.session.get(ProfileHandle,'admin:1')
+            if hmac.compare_digest(request.form.get('username', '').casefold().encode(), (admin_handle.username if admin_handle else 'admin').encode()) and app.extensions['admin_security']['check'](password):
                 session.clear()
                 session['admin'] = True
                 session['admin_auth'] = app.extensions['admin_security']['stamp']()
@@ -2114,6 +2125,8 @@ def create_app(config=None):
                     else:
                         lesson.joining.url = link
                 elif action == 'recording':
+                    from urllib.parse import urlsplit as recording_urlsplit
+                    if (recording_urlsplit(request.form.get('url','')).hostname or '').lower() in ('youtube.com','www.youtube.com','m.youtube.com','youtu.be','www.youtube-nocookie.com'):abort(403,'YouTube lesson links must be managed from an assigned Instructor profile.')
                     course = db.get_or_404(Course, int(field('course_id', 20)))
                     recording = Recording(course_id=course.id, title=field('title', 150), url=valid_url(field('url', 3000)),
                         available_at=utc_field('available_at', True) or now())
@@ -2234,6 +2247,14 @@ def create_app(config=None):
     install_team_workflows(app,db,globals(),dict(admin_required=admin_required))
     from lesson_teaching import install as install_lesson_teaching
     install_lesson_teaching(app,db,globals(),dict(admin_required=admin_required))
+    from member_profiles import install as install_member_profiles
+    install_member_profiles(app,db,globals())
+    from member_contacts import install as install_member_contacts
+    install_member_contacts(app,db,globals())
+    from task_alerts import install as install_task_alerts
+    install_task_alerts(app,db,globals())
+    from instructor_workspace import install as install_instructor_workspace
+    install_instructor_workspace(app,db,globals())
     from class_reminders import install as install_class_reminders
     app.extensions['class_reminders']=install_class_reminders(app,db,globals())
     from pathways import install as install_pathways

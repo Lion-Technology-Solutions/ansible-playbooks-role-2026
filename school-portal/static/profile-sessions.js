@@ -42,7 +42,7 @@
   async function apply(response) {
     const value = await response.json();
     if (!response.ok || !value.authenticated) { signIn(value.reason || 'signed-out'); return; }
-    if (key && value.channel !== key) { signIn('signed-out'); return; }
+    if (key && value.channel !== key) { if(value.profile_switch_url){ending=true;location.assign(value.profile_switch_url);}else signIn('signed-out'); return; }
     const server = Date.parse(value.server_now), deadline = Date.parse(value.expires_at);
     if (!Number.isFinite(server) || !Number.isFinite(deadline)) throw new Error('Invalid session response.');
     offset = server - Date.now(); expires = deadline;
