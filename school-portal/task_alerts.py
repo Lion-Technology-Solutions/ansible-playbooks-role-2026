@@ -7,6 +7,7 @@ from flask import g,session,request,abort,render_template
 from sqlalchemy import select,text
 from providers import ORIGIN,api
 from whatsapp_templates import validate,TemplateError
+from lesson_tasks import task_number
 
 
 def define(db,now):
@@ -87,7 +88,7 @@ def install(app,db,m):
         event={'assigned':'New task assigned','submitted':'Task submission received','due_24h':'Task due in 24 hours','due_1h':'Task due in one hour'}[row.kind]
         local=deadline(task,member).astimezone(ZoneInfo(member.timezone)).strftime('%b %d, %Y %H:%M %Z')
         if row.kind!='assigned':
-            mail=app.extensions['staff_portal']['mail'](member,'task',row.event_key+':email',member.email,event,f'{task.title}\nDue: {local}\nView in portal: {ORIGIN}/staff/workboard',task_notice=row.id)
+            mail=app.extensions['staff_portal']['mail'](member,'task',row.event_key+':email',member.email,event,f'{task_number(task)} · {task.title}\nDue: {local}\nView in portal: {ORIGIN}/staff/workboard',task_notice=row.id)
             db.session.commit();app.extensions['staff_portal']['dispatch']([mail.id])
             row=db.session.scalar(select(Notice).where(Notice.id==identity).with_for_update().execution_options(populate_existing=True))
             if row.status in ('accepted','cancelled','uncertain'):return
@@ -99,7 +100,7 @@ def install(app,db,m):
         values=service['config']('whatsapp');sid=values.get('TWILIO_TASK_TEMPLATE_SID','')
         if not service['ready']('whatsapp'):row.status='awaiting_provider';db.session.commit();return
         if not re.fullmatch(r'HX[0-9a-fA-F]{32}',sid):row.status='awaiting_template';db.session.commit();return
-        variables={'1':member.name,'2':event,'3':task.title.replace('\r',' ').replace('\n',' '),'4':local,'5':ORIGIN+'/staff/workboard'}
+        variables={'1':member.name,'2':event,'3':(task_number(task)+' · '+task.title).replace('\r',' ').replace('\n',' '),'4':local,'5':ORIGIN+'/staff/workboard'}
         try:app.config.get('WHATSAPP_TEMPLATE_VALIDATOR',validate)(values,sid,variables)
         except TemplateError as error:row.status=error.status;db.session.commit();return
         if row.attempts>=5:row.status='failed';db.session.commit();return

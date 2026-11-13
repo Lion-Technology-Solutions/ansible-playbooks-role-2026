@@ -15,6 +15,7 @@ def media_url(value):
         if parsed.path=='/watch':video=parse_qs(parsed.query).get('v',[''])[0]
         elif parsed.path.startswith(('/embed/','/shorts/')):video=parsed.path.split('/')[2]
     elif host=='youtu.be':video=parsed.path.lstrip('/')
+    elif host=='www.youtube-nocookie.com' and parsed.path.startswith('/embed/'):video=parsed.path.split('/')[2]
     if video and re.fullmatch(r'[A-Za-z0-9_-]{11}',video):return 'youtube','https://www.youtube-nocookie.com/embed/'+video
     if (host=='zoom.us' or host.endswith('.zoom.us')) and parsed.path.startswith(('/j/','/rec/')):return 'zoom',value
     raise ValueError('Use a YouTube video URL or a Zoom meeting/recording URL.')
@@ -48,6 +49,7 @@ def install(app,db,m,guards):
     def lesson_for(identity):
         lesson=db.get_or_404(Lesson,identity)
         if not can_teach(lesson.course_id):abort(403)
+        if request.method=='POST' and db.session.scalar(select(m['LessonTask'].task_id).where(m['LessonTask'].lesson_id==lesson.id).limit(1)):abort(403,'This lesson uses assigned-task content review. Open your assigned lesson task to submit changes.')
         return lesson
     def audit(action,lesson):
         db.session.add(m['StaffAudit'](actor='admin:1' if session.get('admin') else 'staff:'+str(g.staff.id),member_id=g.staff.id if g.staff else None,action=action,detail='Lesson '+str(lesson.id)))

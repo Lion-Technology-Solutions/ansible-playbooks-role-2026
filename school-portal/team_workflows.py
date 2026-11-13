@@ -1,4 +1,5 @@
 """Record-linked tasks and scoped, meeting-friendly team operations."""
+from lesson_tasks import task_number
 from datetime import date
 from flask import abort, flash, g, redirect, render_template, request, session, url_for
 from sqlalchemy import select
@@ -60,7 +61,7 @@ def install(app, db, m, guards):
                 student=student or enrollment.student
                 task=Task(member_id=target.id,title=title,description=instructions,due_on=due,priority=priority)
                 db.session.add(task); db.session.flush();app.extensions['task_alerts']['assigned'](task)
-                deliveries.append(app.extensions['staff_portal']['mail'](target,'task','task:'+str(task.id),target.email,'New LionTech staff task',f'{title}\nDue: {due}\nView your assigned task in the portal: https://www.liontechacademy.com/staff/workboard').id)
+                deliveries.append(app.extensions['staff_portal']['mail'](target,'task','task:'+str(task.id),target.email,'New LionTech staff task',f'{task_number(task)} · {title}\nDue: {due}\nView your assigned task in the portal: https://www.liontechacademy.com/staff/workboard').id)
                 db.session.add(Link(task_id=task.id,enrollment_id=enrollment.id if enrollment else None,student_id=student.id,kind=kind))
                 db.session.add(Audit(actor=actor(),member_id=target.id,action='record_task_assigned',detail=f'Task {task.id}; {kind}; student {student.id}'))
             db.session.commit(); app.extensions['staff_portal']['dispatch'](deliveries); flash(f'{len(records)} record tasks assigned.');return redirect(url_for('staff_workboard'))
