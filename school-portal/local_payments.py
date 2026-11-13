@@ -14,7 +14,8 @@ from flutterwave_payments import CURRENCIES as FLW_CURRENCIES,checkout_url
 
 def install(app,db,m,h):
     Quote,Checkout=m['LocalPaymentQuote'],m['LocalCheckout'];now,aware=m['now'],m['aware'];locale=app.extensions['local_experience'];integrations=app.extensions['integrations']
-    def expected(enrollment):
+    def expected(enrollment,allow_offer_expired=False):
+        app.extensions['bonanza']['payment_allowed'](enrollment,allow_expired=allow_offer_expired)
         fixed=app.extensions['program_link_plans']['billing'](enrollment)
         if fixed:
             if not fixed['next']:raise ValueError('This payment plan is complete.')
@@ -120,9 +121,10 @@ def install(app,db,m,h):
         record.paid=True
         if record.test_mode:return
         if row.credited or (not allow_expired and aware(row.expires_at)<now()):record.needs_review=True;return
-        try:value=expected(enrollment)
+        try:value=expected(enrollment,allow_offer_expired=allow_expired)
         except ValueError:record.needs_review=True;return
         if row.fingerprint!=fingerprint(enrollment,value):record.needs_review=True;return
+        if not app.extensions['bonanza']['confirm'](record,allow_expired=allow_expired):record.needs_review=True;return
         reference='local:'+record.id
         if row.stage==-1:
             invoice=db.session.scalar(select(m['FeeInvoice']).where(m['FeeInvoice'].enrollment_id==enrollment.id).with_for_update())
@@ -176,6 +178,8 @@ def install(app,db,m,h):
         if request.form.get('funds_verified')!='yes':abort(400,'Confirm that the provider verified the actual payment.')
         if not record.paid or record.test_mode or not record.needs_review:abort(409,'Only provider-verified live payments awaiting review qualify.')
         if record.quote.credited:abort(409,'This quote was already credited. Reconcile any duplicate payment with the provider.')
+        binding=db.session.get(m['BonanzaEnrollment'],record.quote.enrollment_id)
+        if binding and not binding.confirmed_at and aware(app.extensions['bonanza']['clock']())>=aware(binding.expires_at) and request.form.get('promo_paid_before_deadline')!='yes':abort(400,'Confirm that this first Bonanza payment was actually paid before the promotion deadline, or reconcile/refund it with the provider.')
         settle(record,allow_expired=True)
         if not record.quote.credited:db.session.rollback();abort(409,'The enrollment balance changed. Reconcile this payment before crediting it.')
         record.needs_review=False

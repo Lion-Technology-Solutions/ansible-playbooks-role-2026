@@ -17,13 +17,9 @@ from devops_pathway import STAGES as DEVOPS, MONTHLY as DEVOPS_MONTHLY
 PROGRAMS={'devops':('DevOps',DEVOPS),'cybersecurity':('Cybersecurity',CYBER),'data-analytics':('Data Analytics',ANALYTICS),'cloud-computing':('Cloud Computing',CLOUD)}
 
 def cyber_starts(today):
-    starts=[]
-    for year in range(max(2027,today.year),max(2027,today.year)+2):
-        for month in range(1,13):
-            d=max(w[0] for w in calendar.monthcalendar(year,month))
-            value=date(year,month,d)
-            if value>=today:starts.append(value)
-    return starts
+    from christmas_bonanza import fourth_saturdays
+    return fourth_saturdays(today)
+
 
 def cyber_payment_stages(stages,start):
     if not start:return [dict(s,due=None,first_class=None) for s in stages]
@@ -152,6 +148,8 @@ def install(app,db,m,h):
             try:
                 cohort=db.get_or_404(m['Cohort'],int(request.form.get('cohort_id','0')))
                 if cohort.course_id!=course.id or cohort.start_date not in m['available_start_dates'](course):raise ValueError('Choose a valid upcoming intake.')
+                if program in ('devops','cloud-computing','cybersecurity') and app.extensions['bonanza']['active']():
+                    return redirect(url_for('christmas_bonanza',program=program,level=level,date=cohort.start_date.isoformat(),step='review'))
                 choice=request.form.get('plan','installments')
                 if choice not in (('installments',) if program=='devops' else ('full','installments')):raise ValueError('Choose a payment option.')
                 session['level_payment_choice']={'course_id':course.id,'plan':choice}

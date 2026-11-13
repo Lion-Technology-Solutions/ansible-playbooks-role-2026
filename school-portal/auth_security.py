@@ -76,11 +76,20 @@ def install(app,db,m,h):
         row.expires_at=now()+timedelta(hours=4)
         next_class=session.get('next_class_id')
         linked_context=session.get('linked_profiles')
+        offer_choice=session.get('bonanza_choice');offer_application=session.get('application') if offer_choice else None
         session.clear()
         if linked_context:session['linked_profiles']=linked_context
+        if offer_choice:session['bonanza_choice']=offer_choice;session['application']=offer_application
         session.update(student_id=student.id,student_auth=stamp(student),auth_session=token);session.permanent=True
         enrollment=db.session.get(m['Enrollment'],row.next_enrollment_id) if row.next_enrollment_id else None
+        offer_failed=False
+        if not enrollment and offer_choice:
+            try:enrollment=app.extensions['bonanza']['resume'](student)
+            except (ValueError,IntegrityError) as error:db.session.rollback();flash(str(error) if isinstance(error,ValueError) else 'Refresh the promotion to review your enrollment.');offer_failed=True
+        session.pop('bonanza_choice',None)
+        if offer_choice:session.pop('application',None)
         destination=url_for('global_payment',enrollment_id=enrollment.id) if enrollment and enrollment.student_id==student.id else url_for('portal')
+        if offer_failed:destination=url_for('christmas_bonanza')
         if isinstance(next_class,int) and next_class>0:destination=url_for('class_access',class_id=next_class)
         row.next_enrollment_id=None;audit('sign_in');db.session.commit();return redirect(destination)
     def advance(row,token):
@@ -96,8 +105,9 @@ def install(app,db,m,h):
         p=profile(student);token=secrets.token_urlsafe(32)
         row=Login(digest=digest(token),student_id=student.id,stamp=stamp(student),version=p.security_version,expires_at=now()+timedelta(minutes=15),next_enrollment_id=next_enrollment)
         next_class=session.get('next_class_id')
-        db.session.add(row);db.session.commit();linked_context=session.get('linked_profiles');session.clear();
+        db.session.add(row);db.session.commit();linked_context=session.get('linked_profiles');offer_choice=session.get('bonanza_choice');offer_application=session.get('application') if offer_choice else None;session.clear();
         if linked_context:session['linked_profiles']=linked_context
+        if offer_choice:session['bonanza_choice']=offer_choice;session['application']=offer_application
         session['pending_auth']=token;session['csrf']=secrets.token_hex(24)
         if isinstance(next_class,int) and next_class>0:session['next_class_id']=next_class
         if send_verification and needs_email(student):
@@ -548,7 +558,8 @@ def install(app,db,m,h):
                 if application:
                     course=db.get_or_404(m['Course'],application.get('course_id'));cohort=db.get_or_404(m['Cohort'],application.get('cohort_id'))
                     if not course.publication.published or cohort.course_id!=course.id or cohort.start_date not in m['available_start_dates'](course):raise ValueError('Choose a current program and batch before creating your account.')
-                    enrollment=m['Enrollment'](student_id=student.id,course_id=course.id,cohort_id=cohort.id);db.session.add(enrollment)
+                    enrollment=m['Enrollment'](student_id=student.id,course_id=course.id,cohort_id=cohort.id);db.session.add(enrollment);db.session.flush()
+                    if session.get('bonanza_choice'):app.extensions['bonanza']['bind'](enrollment,session['bonanza_choice'])
                 m['record_policy_acceptance'](student,provider)
                 db.session.add(Social(provider=provider,subject=info['subject'],student_id=student.id));record.consumed=True;db.session.commit()
                 return begin(student,send_verification=True,next_enrollment=enrollment.id if enrollment else None)

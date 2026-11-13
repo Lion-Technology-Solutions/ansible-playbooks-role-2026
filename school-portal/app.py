@@ -1072,9 +1072,8 @@ def next_start_dates(today=None):
 def available_start_dates(course,today=None):
     from start_dates import analytics_starts
     day=today or academy_today()
-    if course.slug.startswith('cybersecurity'):
-        from pathways import cyber_starts
-        return cyber_starts(day)
+    from christmas_bonanza import family,fourth_saturdays
+    if family(course.slug):return fourth_saturdays(day)
     return analytics_starts(day) if course.slug.startswith('data-analytics') else next_start_dates(day)
 
 
@@ -1107,6 +1106,8 @@ from task_alerts import define as define_task_alerts
 globals().update(define_task_alerts(db,now))
 from member_profiles import define as define_member_profiles
 globals().update(define_member_profiles(db))
+from christmas_bonanza import define as define_christmas_bonanza
+globals().update(define_christmas_bonanza(db,now))
 
 def create_app(config=None):
     app = Flask(__name__)
@@ -1311,6 +1312,12 @@ def create_app(config=None):
         course=db.get_or_404(Course,course_id)
         cohort=db.get_or_404(Cohort,cohort_id)
         if not course.publication.published or cohort.course_id!=course.id or cohort.start_date not in available_start_dates(course):abort(400)
+        if app.extensions['bonanza']['active']():
+            from christmas_bonanza import family
+            program=family(course.slug)
+            if program:
+                level=next((part['key'] for part in __import__('pathways').PROGRAMS[program][1] if part['slug']==course.slug),'foundation')
+                return redirect(url_for('christmas_bonanza',program=program,level=level,date=cohort.start_date.isoformat(),step='review'))
         if g.student:
             enrollment=db.session.scalar(select(Enrollment).where(Enrollment.student_id==g.student.id,Enrollment.course_id==course.id))
             if not enrollment:
@@ -1668,6 +1675,7 @@ def create_app(config=None):
                     raise ValueError('Enter a valid email, country, and student type.')
                 if not 10 <= len(password) <= 128 or password != request.form.get('confirm_password'):
                     raise ValueError('Use matching passwords with 10–128 characters.')
+                if session.get('bonanza_choice'):app.extensions['bonanza']['validate_choice'](session['bonanza_choice'])
                 application=session.get('application');chosen_course=None;chosen_cohort=None
                 if application:
                     chosen_course=db.session.get(Course,application.get('course_id'))
@@ -1691,7 +1699,8 @@ def create_app(config=None):
                 enrollment=None
                 if chosen_course:
                     enrollment=Enrollment(student_id=student.id,course_id=chosen_course.id,cohort_id=chosen_cohort.id if kind=='new' or chosen_course.slug.startswith(('data-analytics','cybersecurity','cloud-computing','devops')) else None)
-                    db.session.add(enrollment)
+                    db.session.add(enrollment);db.session.flush()
+                    if session.get('bonanza_choice'):app.extensions['bonanza']['bind'](enrollment,session['bonanza_choice'])
                 db.session.commit()
                 flash(f'Your student number is {student.student_number}. Email verification activates your account; verified payment activates enrollment.')
                 return app.extensions['auth_security']['begin'](student,send_verification=True,next_enrollment=enrollment.id if enrollment else None)
@@ -1767,6 +1776,11 @@ def create_app(config=None):
                     cohort = db.get_or_404(Cohort, int(cohort_id))
                     if cohort.course_id != course.id or cohort.start_date not in available_start_dates(course):
                         raise ValueError('Choose a valid upcoming start date.')
+                from christmas_bonanza import family
+                program=family(course.slug)
+                if app.extensions['bonanza']['active']() and program:
+                    level=next((part['key'] for part in __import__('pathways').PROGRAMS[program][1] if part['slug']==course.slug),'foundation')
+                    return redirect(url_for('christmas_bonanza',program=program,level=level,date=cohort.start_date.isoformat(),step='review'))
                 enrollment = Enrollment(student_id=g.student.id, course_id=course.id, cohort_id=cohort.id if cohort else None)
                 db.session.add(enrollment)
                 db.session.commit()
@@ -2255,6 +2269,8 @@ def create_app(config=None):
     install_task_alerts(app,db,globals())
     from instructor_workspace import install as install_instructor_workspace
     install_instructor_workspace(app,db,globals())
+    from christmas_bonanza import install as install_christmas_bonanza
+    install_christmas_bonanza(app,db,globals())
     from class_reminders import install as install_class_reminders
     app.extensions['class_reminders']=install_class_reminders(app,db,globals())
     from pathways import install as install_pathways
