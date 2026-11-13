@@ -1250,6 +1250,7 @@ def create_app(config=None):
         @wraps(fn)
         def wrapped(*args, **kwargs):
             if not session.get('admin'):
+                if request.method=='GET' and re.fullmatch(r'/admin/lesson-submissions/[0-9a-f]{32}',request.path):session['admin_lesson_review_return']=request.path
                 return redirect(url_for('admin_login'))
             return fn(*args, **kwargs)
         return wrapped
@@ -1765,11 +1766,12 @@ def create_app(config=None):
             password = request.form.get('password', '')
             admin_handle=db.session.get(ProfileHandle,'admin:1')
             if hmac.compare_digest(request.form.get('username', '').casefold().encode(), (admin_handle.username if admin_handle else 'admin').encode()) and app.extensions['admin_security']['check'](password):
+                review_return=session.get('admin_lesson_review_return','')
                 session.clear()
                 session['admin'] = True
                 session['admin_auth'] = app.extensions['admin_security']['stamp']()
                 session.permanent = True
-                return redirect(url_for('admin'))
+                return redirect(review_return if re.fullmatch(r'/admin/lesson-submissions/[0-9a-f]{32}',review_return) else url_for('admin'))
             failed_login(key)
             flash('Invalid admin username or password.')
         return render_template('login.html', admin=True)

@@ -276,3 +276,29 @@ def test_staff_can_remove_wrong_recording_and_correct_returned_submission(app):
         assert db.session.scalar(select(LessonMedia)).kind=='youtube'
         assert len(db.session.get(LessonSubmission,identity).payload['recordings'])==2
         assert len(db.session.get(LessonSubmission,current).payload['recordings'])==1
+
+
+def test_notification_link_returns_to_exact_submission_after_admin_signin(app):
+    _,_,worker,lid,tid,*_=scenario(app);package(app,worker,tid);submit(worker,tid);identity=submission_id(app)
+    guest=app.test_client();path='/admin/lesson-submissions/'+identity
+    assert guest.get(path).location.endswith('/admin/login')
+    response=guest.post('/admin/login',data={'csrf':csrf(guest,'/admin/login'),'username':'admin','password':'test-admin-password'})
+    assert response.status_code==302 and response.location==path
+    assert b'Review: Linux foundations' in guest.get(response.location).data
+
+
+def test_admin_review_return_cannot_redirect_off_site(app):
+    guest=app.test_client()
+    with guest.session_transaction() as state:state['admin_lesson_review_return']='https://example.org/phishing'
+    response=guest.post('/admin/login',data={'csrf':csrf(guest,'/admin/login'),'username':'admin','password':'test-admin-password'})
+    assert response.status_code==302 and response.location=='/admin'
+
+
+def test_expired_admin_session_keeps_notification_review_destination(app):
+    manager,_,worker,lid,tid,*_=scenario(app);package(app,worker,tid);submit(worker,tid);identity=submission_id(app)
+    from app import now
+    app.config['SESSION_CLOCK']=lambda:now()+timedelta(minutes=16)
+    path='/admin/lesson-submissions/'+identity;response=manager.get(path)
+    assert response.status_code==302 and '/admin/login' in response.location
+    response=manager.post('/admin/login',data={'csrf':csrf(manager,'/admin/login'),'username':'admin','password':'test-admin-password'})
+    assert response.status_code==302 and response.location==path

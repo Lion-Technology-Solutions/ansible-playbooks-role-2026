@@ -1,4 +1,5 @@
 """Server-enforced idle sessions and isolated administrator role previews."""
+import re
 import hashlib
 import secrets
 from datetime import datetime,timedelta,timezone
@@ -42,7 +43,9 @@ def install(app, db, m):
             row.revoked=True;db.session.commit()
         session.clear();g.student=None;g.staff=None
     def failure(reason, previous):
+        lesson_review_return=request.path if previous=='admin:1' and request.method=='GET' and re.fullmatch(r'/admin/lesson-submissions/[0-9a-f]{32}',request.path) else None
         end()
+        if lesson_review_return:session['admin_lesson_review_return']=lesson_review_return
         destination=url_for(login_endpoint(previous),reason=reason)
         if request.endpoint in ('session_status','session_activity','session_end') or request.is_json:
             return jsonify(authenticated=False,reason=reason,login_url=destination),401
