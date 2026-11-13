@@ -234,3 +234,12 @@ def test_historical_paid_standard_plan_preserved_when_offer_claimed(app):
         assert not db.session.get(BonanzaEnrollment,eid)
         assert db.session.get(EnrollmentPaymentSchedule,eid).total==2394
         assert db.session.get(EnrollmentPaymentSchedule,eid).stages==old
+
+
+def test_active_promotion_never_intercepts_static_assets(app):
+    client=campaign(app)
+    for asset in ('bonanza.css','bonanza.js','style.css','icons.svg','brand/academy-mark-v1.png'):
+        response=client.get('/static/'+asset)
+        assert response.status_code==200,asset
+        assert response.mimetype!='text/html'
+    assert client.get('/static/missing-bonanza-asset.css').status_code==404

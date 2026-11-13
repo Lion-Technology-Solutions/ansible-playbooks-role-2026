@@ -2215,6 +2215,8 @@ def create_app(config=None):
     def handled_error(error):
         # Keep protocol headers such as Allow and Retry-After on recovery screens.
         response=error.get_response()
+        # Asset requests intentionally skip user/schema initialization.
+        if request.endpoint=='static':return response
         response.set_data(render_template('error.html',code=error.code,message=error.description))
         response.content_type='text/html; charset=utf-8'
         return response
