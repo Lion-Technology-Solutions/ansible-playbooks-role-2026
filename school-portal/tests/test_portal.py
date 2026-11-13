@@ -307,7 +307,8 @@ def test_program_intakes_follow_published_calendar_and_reject_unoffered_date(app
     assert b'Choose a valid upcoming start date' in request_enrollment(student,devops_id,other_id).data
     assert b'/programs/devops' in page.data
     intake_page=student.get('/programs/devops/foundation/enroll')
-    for start in next_start_dates():
+    from christmas_bonanza import fourth_saturdays
+    for start in fourth_saturdays(date.today()):
         assert start.strftime('%A, %B %d, %Y').encode() in intake_page.data
     with app.app_context():
         assert db.session.scalar(select(Enrollment.id)) is None

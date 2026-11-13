@@ -32,8 +32,8 @@ def test_public_levels_prices_curriculum_and_intakes(app):
     r=student.get('/programs/cybersecurity/foundation')
     assert b'278.60' in r.data and b'139.30' in r.data and b'USD' not in r.data
     assert r.data.count(b'data-lesson-row')==8
-    assert b'January 25, 2027' in student.get('/programs/cybersecurity/foundation/enroll').data
-    assert cyber_starts(date(2027,3,1))[0]==date(2027,3,29)
+    assert b'January 23, 2027' in student.get('/programs/cybersecurity/foundation/enroll').data
+    assert cyber_starts(date(2027,3,1))[0]==date(2027,3,27)
     with app.app_context():
         assert db.session.query(CybersecurityUnit).count()==24
         assert db.session.query(LabExercise).count()==30
@@ -46,7 +46,7 @@ def test_seventh_payment_dates_and_full_option_snapshot(app):
     from app import Cohort
     manager,student,ids,labs=setup(app)
     page=student.get('/programs/cybersecurity/foundation/enroll')
-    with app.app_context():cid=db.session.scalar(select(Cohort.id).where(Cohort.course_id==ids['cybersecurity'],Cohort.start_date==date(2027,1,25)))
+    with app.app_context():cid=db.session.scalar(select(Cohort.id).where(Cohort.course_id==ids['cybersecurity'],Cohort.start_date==date(2027,1,23)))
     r=student.post('/programs/cybersecurity/foundation/enroll',data={'csrf':csrf(student,'/portal'),'cohort_id':cid,'plan':'installments'},follow_redirects=True)
     assert r.status_code==200
     with app.app_context():
