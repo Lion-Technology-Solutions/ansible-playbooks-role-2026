@@ -259,3 +259,20 @@ def test_manual_resolution_cannot_race_an_inflight_zoom_request(app):
     result=post(worker,f'/staff/lesson-tasks/{tid}/schedule',starts_at='2027-01-16T12:00',timezone='America/Toronto',duration='120',zoom_mode='manual',join_url='https://zoom.us/j/123456789',checked_zoom='yes')
     assert b'still processing' in result.data
     with app.app_context():assert not db.session.scalar(select(ClassSession))
+
+
+def test_staff_can_remove_wrong_recording_and_correct_returned_submission(app):
+    manager,_,worker,lid,tid,*_=scenario(app,'recordings');draft(worker,tid)
+    aid=upload(app,worker,tid,'recording','wrong.mp4',b'wrong video')
+    submit(worker,tid,recording_url='https://youtu.be/dQw4w9WgXcQ');identity=submission_id(app)
+    decision(manager,identity,decision='changes_requested',feedback='Remove the raw video; keep the YouTube recording.')
+    draft(worker,tid);path=f'/staff/lesson-tasks/{tid}';page=worker.get(path)
+    version=re.search(rb'name="version" value="([^"]*)"',page.data)[1].decode()
+    result=worker.post(path,data={'csrf':csrf(worker,path),'version':version,'action':'remove_recording','recording_identity':aid},follow_redirects=True);assert result.status_code==200
+    assert b'Awaiting administrator review' in submit(worker,tid).data
+    current=submission_id(app);decision(manager,current)
+    with app.app_context():
+        assert not db.session.get(LessonFile,(lid,aid))
+        assert db.session.scalar(select(LessonMedia)).kind=='youtube'
+        assert len(db.session.get(LessonSubmission,identity).payload['recordings'])==2
+        assert len(db.session.get(LessonSubmission,current).payload['recordings'])==1

@@ -94,12 +94,14 @@ def install(app,db,m,h):
         if category=='recording' and not asset.mime.startswith('video/'):raise ValueError('Upload a video file for a recording.')
         return asset
     def manifest(row):
-        data={**row.payload,'files':dict(row.payload.get('files',{})),'recordings':list(row.payload.get('recordings',[]))}
+        data={**row.payload,'files':dict(row.payload.get('files',{})),'recordings':list(row.payload.get('recordings',[])),'excluded_recordings':list(row.payload.get('excluded_recordings',[]))}
+        data['recordings']=[r for r in data['recordings'] if (r.get('asset_id') or r.get('url')) not in data['excluded_recordings']]
         uploads=list(db.session.scalars(select(Upload).where(Upload.submission_id==row.id).order_by(Upload.created_at,Upload.asset_id)))
         for upload in uploads:
             asset=db.session.get(Asset,upload.asset_id)
             if not asset or not asset.ready:continue
             if upload.category=='recording':
+                if asset.id in data['excluded_recordings']:continue
                 if not any(r.get('asset_id')==asset.id for r in data['recordings']):data['recordings'].append(dict(asset_id=asset.id,title=asset.filename))
             else:data['files'][upload.category]=asset.id
         return data
@@ -158,17 +160,23 @@ def install(app,db,m,h):
             access(tid,True)
             try:
                 action=request.form.get('action')
-                if action not in ('draft','submit','begin'):abort(400)
+                if action not in ('draft','submit','begin','remove_recording'):abort(400)
                 if row and request.form.get('version','')!=edit_version(row):raise ValueError('This lesson draft changed in another tab. Reload before continuing.')
                 if row and row.preparer_id==g.staff.id and row.status=='submitted':raise ValueError('This version is locked while it awaits administrator review.')
                 row=ensure_draft(task,assignment,lesson)
-                if action!='begin':
+                if action=='remove_recording':
+                    data=manifest(row);identity=request.form.get('recording_identity','')
+                    if not identity or not any((r.get('asset_id') or r.get('url'))==identity for r in data['recordings']):raise ValueError('Choose a recording in this current draft.')
+                    data['recordings']=[r for r in data['recordings'] if (r.get('asset_id') or r.get('url'))!=identity]
+                    data['excluded_recordings']=list(set(data['excluded_recordings']+[identity]));row.payload=data
+                elif action!='begin':
                     data=manifest(row)
                     data.update({k:request.form.get(k,'').strip() for k in ('title','body','module','notes')})
                     link=request.form.get('recording_url','').strip()
                     if link:
                         kind,url=media_url(link)
                         if kind=='zoom' and '/rec/' not in url:raise ValueError('Use a Zoom recording URL.')
+                        data['excluded_recordings']=[identity for identity in data['excluded_recordings'] if identity!=url]
                         if not any(r.get('url')==url for r in data['recordings']):data['recordings'].append(dict(kind=kind,url=url,title=request.form.get('recording_title','').strip()[:150] or 'Lesson recording'))
                     if action=='submit':
                         validate(row,assignment,lesson,data)
