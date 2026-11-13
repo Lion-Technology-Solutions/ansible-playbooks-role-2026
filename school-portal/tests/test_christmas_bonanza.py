@@ -243,3 +243,29 @@ def test_active_promotion_never_intercepts_static_assets(app):
         assert response.status_code==200,asset
         assert response.mimetype!='text/html'
     assert client.get('/static/missing-bonanza-asset.css').status_code==404
+
+
+def test_signup_preview_uses_selected_offer_instead_of_standard_policy(app):
+    client=campaign(app)
+    app.config['TRUST_GEO_HEADERS']=True
+    client.environ_base['HTTP_X_VERCEL_IP_COUNTRY']='CA'
+    assert claim(client).status_code==302
+    page=client.get('/register')
+    assert page.status_code==200
+    assert b'Month one tuition: CA$93.80 paid now.' in page.data or b'Month one tuition: $93.80 paid now.' in page.data
+    assert b'562.80' in page.data and b'6 monthly payments' in page.data
+    assert b'138.60' not in page.data and b'3,351.60' not in page.data
+
+
+@pytest.mark.parametrize('path',['/apply/choose','/programs/data-analytics/foundation/enroll'])
+def test_changing_to_excluded_program_clears_previous_offer(app,path):
+    from test_portal import analytics
+    client=campaign(app);claim(client)
+    client.get('/apply?program=data-analytics');course,cohort=analytics(app)
+    response=client.post(path,data={'csrf':csrf(client,'/register'),'course_id':course,'cohort_id':cohort,'plan':'installments'})
+    assert response.status_code==302
+    with client.session_transaction() as session:assert not session.get('bonanza_choice')
+    assert register(client,country='Canada').status_code==200
+    with app.app_context():
+        enrollment=db.session.scalar(select(Enrollment));assert enrollment.course.slug=='data-analytics'
+        assert db.session.query(BonanzaEnrollment).count()==0

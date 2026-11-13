@@ -177,5 +177,5 @@ def install(app,db,m):
         if request.method=='GET' and request.endpoint=='application' and request.args.get('program') in PROGRAMS:return redirect(url_for('christmas_bonanza',program=request.args['program']))
     @app.context_processor
     def context():
-        return dict(bonanza_active=active(),bonanza_end=END.astimezone(timezone.utc).isoformat(),bonanza_now=m['aware'](clock()).astimezone(timezone.utc).isoformat(),bonanza_monthly=MONTHLY,bonanza_family=family,bonanza_binding=lambda enrollment:db.session.get(Binding,enrollment.id),bonanza_url=lambda program,level='foundation':url_for('christmas_bonanza',program=program,level=level))
+        return dict(bonanza_months=lambda program:PROGRAMS.get(program,('',0))[1],bonanza_active=active(),bonanza_end=END.astimezone(timezone.utc).isoformat(),bonanza_now=m['aware'](clock()).astimezone(timezone.utc).isoformat(),bonanza_monthly=MONTHLY,bonanza_family=family,bonanza_binding=lambda enrollment:db.session.get(Binding,enrollment.id),bonanza_url=lambda program,level='foundation':url_for('christmas_bonanza',program=program,level=level))
     app.extensions['bonanza']=dict(active=active,clock=clock,bind=bind,resume=resume,validate_choice=validate_choice,payment_allowed=payment_allowed,confirm=confirm,overview=overview)

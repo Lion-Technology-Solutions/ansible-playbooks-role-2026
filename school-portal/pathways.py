@@ -152,6 +152,7 @@ def install(app,db,m,h):
                     return redirect(url_for('christmas_bonanza',program=program,level=level,date=cohort.start_date.isoformat(),step='review'))
                 choice=request.form.get('plan','installments')
                 if choice not in (('installments',) if program=='devops' else ('full','installments')):raise ValueError('Choose a payment option.')
+                session.pop('bonanza_choice',None)
                 session['level_payment_choice']={'course_id':course.id,'plan':choice}
                 session['application']={'course_id':course.id,'cohort_id':cohort.id}
                 if not g.student:return redirect(url_for('register'))
