@@ -201,7 +201,8 @@ def install(app,db,m,h):
 
     @app.before_request
     def security_guard():
-        if request.endpoint in ('static','health','logout') or not g.student or session.get('admin'):return
+        # Public help and theme CSS must stay reachable during account recovery.
+        if request.endpoint in ('static','health','logout','support_center','branding_css') or not g.student or session.get('admin'):return
         student=g.student;p=profile(student)
         row=current()
         if session.get('auth_session') and not row:

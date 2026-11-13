@@ -1208,7 +1208,7 @@ def create_app(config=None):
                     billing_for=billing_data,
                     offer_for=offer_for,
                     enrollment_checkout=enrollment_checkout,
-                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','devops_catalog','analytics_catalog','program_catalog','program_levels','program_level','level_enroll','teaching_labs','teaching_lab_reviews','lab_page','role_switcher','role_preview','devops_workspace','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review') and bool(g.student or session.get('admin')))
+                    app_shell=request.endpoint in ('admin','portal','enrollments','file_library','lesson_page','lesson_preview','devops_catalog','analytics_catalog','program_catalog','program_levels','program_level','level_enroll','teaching_labs','teaching_lab_reviews','lab_page','role_switcher','role_preview','devops_workspace','attendance','account_location','global_payment','link_payment_plan','live_classes','schedule_admin','integration_hub','integration_detail','integration_activity','connected_accounts','admin_assistant','student_assistant','assistant_review','security_account','security_settings','chatgpt_settings','student_profile','admin_profile','notification_admin','account_review','support_center') and bool(g.student or session.get('admin')))
 
     def student_required():
         def decorate(fn):
@@ -1570,7 +1570,8 @@ def create_app(config=None):
     @app.get('/branding.css')
     def branding_css():
         branding=db.session.get(SiteBranding,1)
-        return Response(f'header{{background:{branding.primary_color}}}.hero{{background:linear-gradient(120deg,{branding.primary_color},#1453de)}}.button.blue{{background:{branding.primary_color}}}.button.yellow,.nav-cta{{background:{branding.accent_color}}}.hero em,.auth-story em{{color:{branding.accent_color}}}',content_type='text/css')
+        from brand_experience import theme_css
+        return Response(theme_css(branding),content_type='text/css')
 
     @app.get('/health')
     def health():
@@ -2169,10 +2170,22 @@ def create_app(config=None):
             attendance=db.session.scalars(select(Attendance).order_by(Attendance.submitted_at.desc())).all())
 
     @app.errorhandler(400)
+    @app.errorhandler(401)
     @app.errorhandler(403)
     @app.errorhandler(404)
+    @app.errorhandler(405)
+    @app.errorhandler(409)
+    @app.errorhandler(410)
+    @app.errorhandler(413)
+    @app.errorhandler(422)
+    @app.errorhandler(429)
+    @app.errorhandler(503)
     def handled_error(error):
-        return render_template('error.html', code=error.code, message=error.description), error.code
+        # Keep protocol headers such as Allow and Retry-After on recovery screens.
+        response=error.get_response()
+        response.set_data(render_template('error.html',code=error.code,message=error.description))
+        response.content_type='text/html; charset=utf-8'
+        return response
 
     from integrations import install as install_integrations
     app.extensions['integrations']=install_integrations(app,db,globals(),dict(admin_required=admin_required,student_required=student_required))
@@ -2196,6 +2209,8 @@ def create_app(config=None):
     app.extensions['portal_languages']=install_languages(app,db,globals())
     from local_experience import install as install_local_experience
     app.extensions['local_experience']=install_local_experience(app,db,globals())
+    from brand_experience import install as install_brand_experience
+    install_brand_experience(app)
     from payment_routing import install as install_payment_routing
     install_payment_routing(app)
     from local_payments import install as install_local_payments
