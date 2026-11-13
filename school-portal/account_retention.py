@@ -97,6 +97,7 @@ def install(app,db,m,h):
             if enrollment.payment_status=='submitted':protected='Payment submitted for verification.'
             if db.session.scalar(select(m['LocalCheckout'].id).join(m['LocalPaymentQuote'],m['LocalPaymentQuote'].id==m['LocalCheckout'].quote_id).where(m['LocalPaymentQuote'].enrollment_id==enrollment.id,m['LocalCheckout'].paid.is_(True),m['LocalPaymentQuote'].credited.is_(False)).limit(1)):protected='Provider payment awaiting reconciliation.'
             if db.session.scalar(select(m['PlanPaymentProof'].id).where(m['PlanPaymentProof'].enrollment_id==enrollment.id,m['PlanPaymentProof'].status=='submitted').limit(1)):protected='Payment evidence awaiting review.'
+        if app.extensions['staff_enrollment']['pending'](student):protected='Staff enrollment submission awaiting administrator review.'
         debts.sort(key=lambda d:d['enrollment_id'])
         return debts,protected
     def fingerprint(debts):return hashlib.sha256(json.dumps([(d['enrollment_id'],d['due']) for d in debts]).encode()).hexdigest()

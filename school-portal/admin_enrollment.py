@@ -4,7 +4,7 @@ from datetime import date,datetime,timedelta,timezone
 from decimal import Decimal,InvalidOperation
 from zoneinfo import ZoneInfo
 from flask import abort,flash,g,redirect,render_template,request,session,url_for
-from sqlalchemy import select
+from sqlalchemy import inspect,select
 from sqlalchemy.exc import IntegrityError
 
 
@@ -69,7 +69,13 @@ def install(app,db,m,h):
         return row.amount if row and row.currency==currency else Decimal(0)
     def approved(enrollment):
         row=db.session.get(Review,enrollment.id)
-        return not row or row.status=='approved'
+        if row:return row.status=='approved'
+        workflow=app.extensions.get('staff_enrollment')
+        if workflow and workflow['requires_review'](enrollment.student,enrollment.course_id):
+            state=inspect(enrollment)
+            # Preserve existing paid access, while blocking callbacks from granting new access.
+            return enrollment.status=='approved' and enrollment.payment_status=='verified' and not state.attrs.status.history.has_changes() and not state.attrs.payment_status.history.has_changes()
+        return True
     def preview(student,enrollment=None):
         entries=list(db.session.scalars(select(m['PaymentEntry']).where(m['PaymentEntry'].enrollment_id==enrollment.id))) if enrollment else []
         plan=db.session.get(Plan,enrollment.id) if enrollment else None
@@ -95,7 +101,16 @@ def install(app,db,m,h):
     @h['admin_required']
     def admin_enrollment_review(student_id):
         student=db.get_or_404(m['Student'],student_id)
-        eid=request.values.get('enrollment_id',type=int)
+        proposal=None;proposal_values={}
+        submission_id=request.values.get('submission_id','')
+        if submission_id:
+            try:proposal,proposed_enrollment=app.extensions['staff_enrollment']['packet'](submission_id,student)
+            except ValueError as error:
+                flash(str(error));return redirect(url_for('admin_enrollment_submission',identity=submission_id))
+            proposal_values=proposal.payload
+            eid=proposed_enrollment.id if proposed_enrollment else None
+            if request.values.get('enrollment_id') and request.values.get('enrollment_id',type=int)!=eid:abort(403)
+        else:eid=request.values.get('enrollment_id',type=int)
         enrollment=db.session.scalar(select(Enrollment).where(Enrollment.id==eid).with_for_update()) if eid else None
         if enrollment and enrollment.student_id!=student.id:abort(403)
         if eid and not enrollment:abort(404)
@@ -106,6 +121,7 @@ def install(app,db,m,h):
             try:
                 if request.form.get('version')!=data['version']:raise ValueError('The enrollment or payment record changed. Reload and review the latest balance.')
                 decision=request.form.get('decision','save');mode=request.form.get('mode','confirm');reason=request.form.get('reason','').strip()[:2000]
+                if proposal and (decision!='approve' or request.form.get('allow_access')!='yes' or str(request.form.get('course_id'))!=proposal_values['course_id']):raise ValueError('Approve this submitted program with access enabled, or return/decline the submission from its review page.')
                 if decision not in ('approve','decline','save') or mode not in ('confirm','custom'):raise ValueError('Choose a valid enrollment decision.')
                 if not reason:raise ValueError('Record the reason and the source of the verified tuition information.')
                 kind=request.form.get('student_kind')
@@ -188,6 +204,7 @@ def install(app,db,m,h):
                         app.extensions['student_management']['change'](enrollment,'completed' if (paid>=total and (total>0 or mode=='custom')) else 'current',reason,source='admin')
                     else:enrollment.status='pending'
                 else:enrollment.status='pending'
+                if proposal:app.extensions['staff_enrollment']['finish'](proposal,enrollment,{'course_id':course.id,'student_kind':kind,'total':str(total),'paid':str(paid),'balance':str(total-paid),'currency':currency,'cohort_id':enrollment.cohort_id})
                 db.session.add(Audit(student_id=student.id,enrollment_id=enrollment.id,action=decision,snapshot={'before':data['state'],'after':preview(student,enrollment)['state'],'reason':reason,'reviewer':app.extensions['member_profiles']['audit_actor']()}))
                 db.session.add(m['StudentManagementAudit'](student_id=student.id,enrollment_id=enrollment.id,action='enrollment_'+decision,detail=f'{course.name}; {kind}; {currency} {total}; paid {paid}; balance {total-paid}. '+reason[:500]))
                 notification_kind='enrollment_approved' if decision=='approve' and enrollment.status=='approved' and data['state']['status']!='approved' else 'enrollment_review'
@@ -204,7 +221,7 @@ def install(app,db,m,h):
                 db.session.rollback();flash(str(error) if isinstance(error,ValueError) else 'Another enrollment update was saved. Reload before continuing.');enrollment=db.session.get(Enrollment,eid) if eid else None;data=preview(student,enrollment)
         courses=list(db.session.scalars(select(m['Course']).join(m['CoursePublication']).where(m['CoursePublication'].published.is_(True))))
         m['upcoming_cohorts']()
-        return render_template('admin_enrollment_review.html',student=student,enrollment=enrollment,data=data,courses=courses,cohorts=list(db.session.scalars(select(m['Cohort']).order_by(m['Cohort'].start_date.desc()))))
+        return render_template('admin_enrollment_review.html',student=student,enrollment=enrollment,data=data,proposal=proposal,proposal_values=proposal_values,courses=courses,cohorts=list(db.session.scalars(select(m['Cohort']).order_by(m['Cohort'].start_date.desc()))))
     @app.context_processor
     def context():return dict(enrollment_opening_credit=credit,enrollment_review_data=preview,enrollment_decision=lambda enrollment:db.session.get(Review,enrollment.id))
     app.extensions['admin_enrollment']=dict(preview=preview,credit=credit,approved=approved)

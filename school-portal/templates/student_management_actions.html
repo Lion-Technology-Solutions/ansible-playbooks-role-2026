@@ -1,3 +1,4 @@
+<p><a class="button outline" href="{{ url_for('admin_enrollment_submissions') }}">Staff enrollment submissions · {{ enrollment_submission_count() }} pending</a></p>
 {% from 'macros.html' import token with context %}
 {% macro actions(student,enrollment=none) %}
 {% set archived=student_archived(student) %}
