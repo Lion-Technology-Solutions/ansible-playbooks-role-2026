@@ -191,8 +191,10 @@ def test_each_student_has_individual_dates_and_signup_previews_selected_start(ap
     with app.app_context():
         enrollment=db.session.get(Enrollment,eid);cid=enrollment.course_id
         from app import available_start_dates
-        other_cohort=db.session.scalar(select(Cohort).where(Cohort.course_id==cid,Cohort.start_date==available_start_dates(enrollment.course)[1]));cohort_id=other_cohort.id
         first_dates=list(db.session.get(EnrollmentPaymentSchedule,eid).stages)
+        first_class=date.fromisoformat(first_dates[0]['first_class'])
+        later_start=next(day for day in available_start_dates(enrollment.course) if day>first_class)
+        other_cohort=db.session.scalar(select(Cohort).where(Cohort.course_id==cid,Cohort.start_date==later_start));cohort_id=other_cohort.id
     request_enrollment(second,cid,cohort_id)
     with app.app_context():
         other=db.session.scalar(select(Enrollment).where(Enrollment.id!=eid));other_id=other.id
@@ -201,7 +203,7 @@ def test_each_student_has_individual_dates_and_signup_previews_selected_start(ap
         other_plan=db.session.get(EnrollmentPaymentSchedule,other_id)
         assert other_plan.stages[0]['first_class']!=first_dates[0]['first_class']
         assert other_plan.stages[1]['due']!=first_dates[1]['due']
-        expected=[date.fromisoformat(p['due']).strftime('%B %d, %Y').encode() for p in other_plan.stages]
+        expected=[date.fromisoformat(p['due']).strftime('%B %d, %Y').replace(' 0',' ').encode() for p in other_plan.stages]
     visitor=app.test_client()
     visitor.post('/apply/choose',data={'csrf':csrf(visitor,'/apply'),'course_id':cid,'cohort_id':cohort_id})
     page=visitor.get('/register').data
