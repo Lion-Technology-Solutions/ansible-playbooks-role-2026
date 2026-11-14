@@ -82,7 +82,12 @@ def test_home_brand_courses_and_access_gate(app):
     client = app.test_client()
     page = client.get('/')
     assert page.status_code == 200
-    for content in [b'DevOps', b'Cybersecurity', b'Cloud Computing', b'Data Analytics', next_start_dates()[0].strftime('%b %d, %Y').encode(), b'14375756656']:
+    # Published programs use their own intake calendars, not generic weekend dates.
+    from app import available_start_dates
+    with app.app_context():
+        course=db.session.scalar(select(Course).where(Course.slug=='devops'))
+        first_intake=available_start_dates(course)[0].strftime('%b %d, %Y').encode()
+    for content in [b'DevOps', b'Cybersecurity', b'Cloud Computing', b'Data Analytics', first_intake, b'14375756656']:
         assert content in page.data
     assert client.get('/health').json == {'status':'ok','storage':'test-sqlite'}
     assert client.get('/admin').status_code == 302

@@ -12,6 +12,8 @@ def define(db, now):
         enrollment_id = db.Column(db.Integer, db.ForeignKey('portal_enrollments.id'))
         student_id = db.Column(db.String(36), db.ForeignKey('portal_students.id'), nullable=False)
         kind = db.Column(db.String(20), nullable=False)
+        task=db.relationship('StaffTask')
+        student=db.relationship('Student')
     return dict(TaskRecord=TaskRecord)
 
 
@@ -38,6 +40,7 @@ def install(app, db, m, guards):
     def staff_workboard():
         members=people(); manager=bool(session.get('admin') or (g.staff and g.staff.role=='supervisor'))
         if request.method=='POST':
+            if app.extensions['student_advisors']['enabled']():abort(409,'Student and payment follow-up is assigned automatically through Student Advisors.')
             # Record allocation is an administrator capability; supervision alone
             # does not grant access to the student/payment directory.
             if not session.get('admin'): abort(403)
@@ -87,6 +90,7 @@ def install(app, db, m, guards):
         if not task:abort(404)
         target=db.get_or_404(Member,request.form.get('member_id',type=int))
         if not target.active or not target.verified_at:abort(400)
+        if db.session.scalar(select(m['StudentAdvisor']).where(m['StudentAdvisor'].task_id==task.id)) or db.session.scalar(select(m['AdvisorFollowup']).where(m['AdvisorFollowup'].task_id==task.id)):abort(409,'Student advisors are allocated automatically.')
         previous=task.member_id;task.member_id=target.id;task.updated_at=m['now']();app.extensions['task_alerts']['assigned'](task)
         db.session.add(Audit(actor=actor(),member_id=target.id,action='task_reassigned',detail=f'Task {task.id}; previous staff {previous}'));db.session.commit()
         return redirect(url_for('staff_workboard'))

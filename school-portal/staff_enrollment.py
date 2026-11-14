@@ -108,6 +108,7 @@ def install(app,db,m,h):
         if not task:abort(404)
         if task.member_id!=member.id:abort(403)
         link=db.get_or_404(Link,task_id);student=db.get_or_404(m['Student'],link.student_id)
+        if app.extensions['student_advisors']['enabled']() and student.kind=='new':abort(409,'New students select their program and pay through secure portal checkout. Guide them from the assigned record.')
         if db.session.get(m['StudentArchive'],student.id):abort(400,'Ask an administrator to restore this student record first.')
         row=latest(task_id)
         # A reassigned member starts a new version; earlier submitted packets remain immutable.
