@@ -249,3 +249,45 @@ def test_flutterwave_webhook_processes_local_quotes_without_browser_return(app,m
         assert db.session.get(LocalPaymentQuote,qid).credited is (not sandbox)
         assert len(list(db.session.scalars(select(PaymentEntry.id))))==(0 if sandbox else 1)
         assert (db.session.get(Enrollment,eid).status=='approved') is (not sandbox)
+
+
+def test_production_local_flutterwave_cannot_create_or_resume_test_checkout(app,monkeypatch):
+    monkeypatch.setenv('FLW_SECRET_KEY','FLWSECK_TEST-unit')
+    monkeypatch.setenv('FLW_WEBHOOK_SECRET','unit-local-secret')
+    monkeypatch.setenv('VERCEL_ENV','production')
+    client,eid,page=plan(app);calls=[]
+    app.config['FLUTTERWAVE_HTTP']=lambda *args,**kwargs:calls.append(args)
+    with app.app_context():qid=db.session.scalar(select(LocalPaymentQuote.id))
+    response=client.post('/payments/local/'+qid+'/flutterwave',data={'csrf':csrf(client,'/portal')},follow_redirects=True)
+    assert b'Live payments are temporarily unavailable' in response.data
+    assert not calls
+    with app.app_context():
+        assert db.session.scalar(select(LocalCheckout)) is None
+        db.session.add(LocalCheckout(quote_id=qid,provider='flutterwave',test_mode=True,checkout_url='https://checkout.flutterwave.com/v3/hosted/pay/test'));db.session.commit()
+    response=client.post('/payments/local/'+qid+'/flutterwave',data={'csrf':csrf(client,'/portal')},follow_redirects=True)
+    assert response.status_code==200 and b'Test checkout' in response.data
+    assert not calls
+
+
+@pytest.mark.parametrize('old_test_paid',[False,True])
+def test_live_mode_replaces_test_handoff_without_credit_or_deleting_history(app,monkeypatch,old_test_paid):
+    monkeypatch.setenv('FLW_SECRET_KEY','FLWSECK_TEST-unit')
+    monkeypatch.setenv('FLW_WEBHOOK_SECRET','unit-local-secret')
+    client,eid,page=plan(app)
+    with app.app_context():
+        qid=db.session.scalar(select(LocalPaymentQuote.id))
+        db.session.add(LocalCheckout(quote_id=qid,provider='flutterwave',test_mode=True,paid=old_test_paid,checkout_url='https://checkout.flutterwave.com/v3/hosted/pay/sandbox'));db.session.commit()
+    monkeypatch.setenv('FLW_SECRET_KEY','FLWSECK-unit-live')
+    monkeypatch.setenv('VERCEL_ENV','production')
+    calls=[]
+    app.config['FLUTTERWAVE_HTTP']=lambda *args,**kwargs:calls.append(args) or {'status':'success','data':{'link':'https://checkout.flutterwave.com/v3/hosted/pay/live'}}
+    client.get('/payments/plans/'+str(eid))
+    response=client.post('/payments/local/'+qid+'/flutterwave',data={'csrf':csrf(client,'/portal')})
+    assert response.status_code==303 and response.location.endswith('/live') and len(calls)==1
+    with app.app_context():
+        records=db.session.scalars(select(LocalCheckout)).all()
+        assert len(records)==2 and sum(row.test_mode for row in records)==1
+        assert not db.session.get(LocalPaymentQuote,qid).credited
+        assert not list(db.session.scalars(select(PaymentEntry)))
+    assert client.post('/payments/local/'+qid+'/flutterwave',data={'csrf':csrf(client,'/portal')}).location.endswith('/live')
+    assert len(calls)==1

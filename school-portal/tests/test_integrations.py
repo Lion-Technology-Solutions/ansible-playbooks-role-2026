@@ -26,6 +26,7 @@ def setup(app):
 def values_for(provider):
     values={item['key']:'unit-'+item['key'].lower() for item in CATALOG[provider]['fields'] if item['required']}
     values.update({key:value for key,value in {'SENDGRID_FROM_EMAIL':'notifications@example.com','MICROSOFT_TENANT':'common','TWILIO_WHATSAPP_FROM':'whatsapp:+19152219465','YOUTUBE_CHANNEL_ID':'UCunit_channel'}.items() if key in values})
+    if provider=='flutterwave':values['FLW_SECRET_KEY']='FLWSECK-unit-live'
     return values
 
 
@@ -275,3 +276,17 @@ def test_expired_calendar_tokens_refresh_and_reconnect_creates_new_event_binding
     student.post('/connections/microsoft/sync',data={'csrf':csrf(student,'/account/connections')})
     with app.app_context():assert db.session.scalar(select(CalendarEventLink)).generation!=old
     assert any('different-calendar' in call[0] and call[1]=='POST' for call in calls)
+
+
+def test_flutterwave_production_status_distinguishes_test_and_live(app,monkeypatch):
+    manager,_=setup(app)
+    monkeypatch.setenv('VERCEL_ENV','production')
+    app.config['INTEGRATION_HTTP']=http_ok
+    values=values_for('flutterwave');values['FLW_SECRET_KEY']='FLWSECK_TEST-unit'
+    configure(app,manager,'flutterwave',values)
+    page=configure(app,manager,'flutterwave',action='test')
+    assert b'Live credentials required' in page.data and b'Production checkout is blocked' in page.data
+    values['FLW_SECRET_KEY']='FLWSECK-unit-live'
+    configure(app,manager,'flutterwave',values)
+    page=configure(app,manager,'flutterwave',action='test')
+    assert b'Live API verified' in page.data and b'LIVE V3 merchant API authentication verified' in page.data
