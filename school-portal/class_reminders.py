@@ -74,6 +74,7 @@ def install(app,db,m):
         if failed:raise RuntimeError('Class reminder delivery needs retry.')
     @app.after_request
     def schedule_committed(response):
+        if request.endpoint=='static':return response
         # First admin dashboard visit also arms existing classes after an upgrade.
         if response.status_code<400 and not session.get('role_preview') and (getattr(g,'class_reminders_changed',False) or (session.get('admin') and request.endpoint in ('admin','notification_admin','schedule_admin'))):
             g.class_reminders_changed=False

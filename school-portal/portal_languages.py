@@ -5,7 +5,7 @@ from html import unescape
 from html.parser import HTMLParser
 from jinja2 import Environment,nodes
 from datetime import timedelta
-from flask import abort,g,jsonify,request,session
+from flask import abort,g,jsonify,request,session,url_for
 from sqlalchemy import select,func,text
 from sqlalchemy.exc import IntegrityError
 from experience import FR
@@ -85,14 +85,15 @@ def install(app,db,m):
         return result
     def key(source,language):return hashlib.sha256((language+'\0'+source).encode()).hexdigest()
 
-    def public_catalog():
-        if session.get('admin'):return dict(fr=french,en=reverse)
-        return {name:{k:v for k,v in values.items() if not __import__('re').search(r'USD|US\$|US dollars',k+' '+v,__import__('re').I)} for name,values in [('fr',french),('en',reverse)]}
+    catalogs={'admin':dict(fr=french,en=reverse)}
+    catalogs['public']={name:{k:v for k,v in values.items() if not re.search(r'USD|US\$|US dollars',k+' '+v,re.I)} for name,values in [('fr',french),('en',reverse)]}
+    versions={audience:hashlib.sha256((audience+'\0'+json.dumps(value,sort_keys=True,ensure_ascii=True)).encode()).hexdigest()[:16] for audience,value in catalogs.items()}
+    def audience():return 'admin' if session.get('admin') else 'public'
     @app.context_processor
-    def language_context():return dict(language_catalog_data=public_catalog())
+    def language_context():return dict(language_catalog_url=url_for('language_catalog',v=versions[audience()]))
 
     @app.get('/i18n/catalog')
-    def language_catalog():return jsonify(**public_catalog())
+    def language_catalog():return jsonify(**catalogs[audience()])
 
     @app.post('/i18n/translate')
     def translate_portal_text():

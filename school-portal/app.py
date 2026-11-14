@@ -1208,9 +1208,15 @@ def create_app(config=None):
             if not token or not hmac.compare_digest(token.encode(), (request.headers.get('X-CSRF-Token') or request.form.get('csrf', '')).encode()):
                 abort(400, 'Your form expired. Reload the page and try again.')
 
+    from ui_assets import install as install_ui_assets
+    install_ui_assets(app)
+
     @app.after_request
     def headers(response):
-        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable' if request.endpoint=='static' and request.path.startswith('/static/brand/') else 'no-store'
+        public_asset=request.endpoint=='static' and response.status_code in (200,304)
+        version=app.extensions['ui_assets']['version'](request.view_args.get('filename','')) if public_asset and request.view_args else None
+        immutable=public_asset and (request.path.startswith('/static/brand/') or (version and request.args.get('v')==version))
+        response.headers['Cache-Control']='public, max-age=31536000, immutable' if immutable else 'public, max-age=0, must-revalidate' if public_asset else 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['X-Frame-Options'] = 'DENY'
         response.headers.setdefault('Referrer-Policy','strict-origin-when-cross-origin')
@@ -1283,6 +1289,9 @@ def create_app(config=None):
     def learning_progress(student_id,course_id):
         lessons=db.session.scalars(select(Lesson).where(Lesson.course_id==course_id,Lesson.published.is_(True),Lesson.available_at<=now()).order_by(Lesson.position,Lesson.id)).all()
         completed=set(db.session.scalars(select(LessonCompletion.lesson_id).where(LessonCompletion.student_id==student_id)))
+        return progress_summary(lessons,completed)
+
+    def progress_summary(lessons,completed):
         done=sum(lesson.id in completed for lesson in lessons)
         resume=next((lesson for lesson in lessons if lesson.id not in completed),lessons[-1] if lessons else None)
         return {'lessons':lessons,'completed':completed,'done':done,'total':len(lessons),'percent':round(done/len(lessons)*100) if lessons else 0,'resume':resume}
@@ -1861,7 +1870,10 @@ def create_app(config=None):
         registered = set(db.session.scalars(select(ClassRegistration.class_id).where(ClassRegistration.student_id == g.student.id)))
         announcements = db.session.scalars(public_updates().order_by(PublicUpdate.publish_at.desc()).limit(12)).all()
         lessons=db.session.scalars(select(Lesson).where(Lesson.course_id.in_(course_ids),Lesson.published.is_(True),Lesson.available_at<=now()).order_by(Lesson.course_id,Lesson.position,Lesson.id)).all()
-        progress={e.course_id:(learning_progress(g.student.id,e.course_id) if e.course_id in course_ids else
+        completions=set(db.session.scalars(select(LessonCompletion.lesson_id).where(LessonCompletion.student_id==g.student.id))) if course_ids else set()
+        grouped_lessons={identity:[] for identity in course_ids}
+        for released_lesson in lessons:grouped_lessons[released_lesson.course_id].append(released_lesson)
+        progress={e.course_id:(progress_summary(grouped_lessons[e.course_id],completions) if e.course_id in course_ids else
             {'lessons':[],'completed':set(),'done':0,'total':0,'percent':0,'resume':None}) for e in enrollments}
         upcoming=[item for item in classes if app.extensions['global_experience']['class_state'](item) in ('upcoming','open','missing_link')]
         featured=paid[0] if paid else (enrollments[0] if enrollments else None)
