@@ -325,3 +325,32 @@ Content submissions require five separate document files: lesson outline, flyer,
 Scheduling tasks are pre-authorized for their exact lesson, using an existing Zoom meeting link or the connected Zoom account. A task publishes one class only; provider timeouts preserve an uncertain state and prevent automatic duplicate meeting creation. The operator must check Zoom and attach an existing meeting link to resolve uncertainty. View-only tasks cannot edit, upload or schedule.
 
 Administrator email and WhatsApp review notices have separate durable delivery records. Email uses the configured SendGrid sender and administrator notification recipient. Configure **Integrations → WhatsApp → Administrator WhatsApp number for lesson-review alerts** and **Approved lesson-review WhatsApp template SID**. The approved plain-text template uses `1 task number, 2 lesson, 3 program, 4 submitting staff name, 5 authenticated administrator review URL`; sample copy is available in the review queue. Missing provider/template/recipient setup is visible and does not lose the submitted packet. Pending setup notices are retried by the authenticated daily maintenance job or the queue's password-confirmed check action; ambiguous provider responses require checking provider activity before any resend. Test requests never send real notifications unless explicitly configured with mocked delivery.
+
+
+## Portal quality and performance review — November 13, 2026
+
+The review covers 45 public, student, staff, instructor and administrator screen routes, plus a cross-feature journey from signup and audited tuition approval through private lesson preparation, administrator publication, class scheduling, unpaid-access restrictions and subsequent balance updates. Historical production errors were from a superseded deployment; no error groups were attributed to the live deployment at the start of this review.
+
+Changes: translation dictionaries are fetched only when needed and reused in browser session storage with content-version and audience-specific keys. Public UI assets receive content-hashed URLs and immutable caching; unversioned assets revalidate. Static files do not emit or refresh account cookies or activity records. Authenticated HTML, private files and account/payment responses retain `no-store`. Staff workspace CSS/JS now follow template inheritance, including administrator review and instructor screens. Student progress reuses the released lesson list and batches completion lookup across programs. Reminder test fixtures use the academy’s Toronto calendar date, avoiding failures between UTC midnight and local midnight; payment-access tests check the real checkout link rather than a hidden dictionary entry.
+
+| Representative page | Previous decoded HTML bytes | Updated decoded HTML bytes | Previous local median ms | Updated local median ms |
+|---|---:|---:|---:|---:|
+| Public login | 310,853 | 36,119 | 12.63 | 6.68 |
+| Student dashboard | 337,549 | 63,404 | 36.57 | 28.63 |
+| Student lesson | 328,041 | 53,744 | 22.11 | 16.09 |
+| Administrator lesson assignment | 295,463 | 21,030 | 14.09 | 15.44 |
+| Administrator lesson reviews | 288,115 | 13,663 | 10.33 | 10.65 |
+| Staff dashboard | 310,574 | 36,003 | 14.18 | 8.29 |
+| Staff task board | 311,134 | 36,601 | 15.45 | 10.19 |
+| Student directory with 500 example accounts | 350,840 | 76,573 | 36.06 | 36.67 |
+
+These are paired local samples against disposable file-backed SQLite fixtures with provider test doubles, not production latency or capacity guarantees. Each bounded read run completed 24/24 requests with four workers. Updated p95 was 75.62 ms versus 90.58 ms previously; throughput varied from 65.29 to 60.65 requests/second, so no throughput gain is claimed. The substantial verified gain is response-size reduction and cacheability; heavy directory/server work is not assumed solved by smaller HTML.
+
+Reproduce with the repository dependencies plus pytest installed:
+
+```bash
+python scripts/portal_benchmark.py --students 500 --samples 5 --output /tmp/portal-benchmark.json
+pytest school-portal/tests -q
+```
+
+The benchmark forcibly uses a temporary SQLite test database, synthetic accounts and mocked mail/FX/storage. It does not use production credentials or modify live records. Browser initialization was blocked by a browser cookie API error, so visual desktop/mobile rendering and browser Core Web Vitals remain unverified. Real payment charges, provider delivery and production stress load were not exercised. WhatsApp lesson-review delivery still requires the configured administrator recipient and approved review template; code-level integration tests do not substitute for that setup.

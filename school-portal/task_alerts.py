@@ -123,6 +123,7 @@ def install(app,db,m):
         return render_template('staff_task_notifications.html',notices=list(db.session.scalars(query)))
     @app.after_request
     def schedule(response):
+        if request.endpoint=='static':return response
         if response.status_code<400 and (getattr(g,'task_alert_dirty',False) or (session.get('admin') and request.endpoint=='staff_workboard')):
             g.task_alert_dirty=False
             try:arm()

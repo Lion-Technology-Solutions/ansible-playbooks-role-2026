@@ -7,7 +7,20 @@
  const lookup=(source,target)=>{const exact=known[target]?.get(source);if(exact)return exact;const parts=source.match(/^([✓●✦]\s*)(.+)$/);const label=parts&&known[target]?.get(parts[2]);return label?parts[1]+label:undefined;};
  const paint=(raw,value)=>raw.match(/^\s*/)[0]+value+raw.match(/\s*$/)[0];
  const write=(node,text)=>{node.textContent=text;const original=sources.get(node);if(original)original.last=text;};
- async function loadCatalog(){if(!catalog){const inline=document.getElementById('portal-language-catalog');catalog=inline?JSON.parse(inline.textContent):await fetch('/i18n/catalog').then(r=>{if(!r.ok)throw Error();return r.json();});for(const [key,value] of Object.entries(catalog.fr))known.fr.set(key,value);for(const [key,value] of Object.entries(catalog.en))known.en.set(key,value);}return catalog;}
+ async function loadCatalog(){
+  if(catalog)return catalog;
+  const inline=document.getElementById('portal-language-catalog'),url=inline?.dataset.catalogUrl;
+  const valid=value=>value&&typeof value.fr==='object'&&value.fr!==null&&!Array.isArray(value.fr)&&typeof value.en==='object'&&value.en!==null&&!Array.isArray(value.en);
+  let loaded;
+  if(url){
+   const cacheKey='liontech:language-catalog:'+url;
+   try{const saved=JSON.parse(sessionStorage.getItem(cacheKey));if(valid(saved))loaded=saved;}catch{}
+   if(!loaded){const response=await fetch(url,{credentials:'same-origin'});if(!response.ok)throw Error('Catalog unavailable');loaded=await response.json();if(!valid(loaded))throw Error('Invalid catalog');try{sessionStorage.setItem(cacheKey,JSON.stringify(loaded));}catch{}}
+  }else if(inline){loaded=JSON.parse(inline.textContent);}
+  else{const response=await fetch('/i18n/catalog',{credentials:'same-origin'});if(!response.ok)throw Error('Catalog unavailable');loaded=await response.json();}
+  if(!valid(loaded))throw Error('Invalid catalog');
+  catalog=loaded;for(const [key,value] of Object.entries(catalog.fr))known.fr.set(key,value);for(const [key,value] of Object.entries(catalog.en))known.en.set(key,value);return catalog;
+ }
  function collect(){const nodes=[],walk=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT,{acceptNode:n=>excluded(n.parentElement)||!/[A-Za-zÀ-ÿ]/.test(n.textContent)?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT});while(walk.nextNode())nodes.push(walk.currentNode);return nodes;}
  async function apply(target){const ticket=++generation;language=target;document.documentElement.lang=target;forms.forEach(f=>f.querySelector('[name="language"]').value=target);let missing=new Set();try{await loadCatalog();}catch{status.textContent='Language service unavailable.';return;}
  if(ticket!==generation)return;

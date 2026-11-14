@@ -294,6 +294,7 @@ def install(app,db,m):
             for link in members(p):account(link.actor).name=name
     @app.after_request
     def retain_student_proof(response):
+        if request.endpoint=='static':return response
         context=session.get('linked_profiles')
         if context and session.get('auth_session'):context={**context,'student_token':session['auth_session']};session['linked_profiles']=context
         return response

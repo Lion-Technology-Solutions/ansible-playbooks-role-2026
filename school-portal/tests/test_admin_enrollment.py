@@ -3,7 +3,7 @@ from decimal import Decimal
 import re
 import pytest
 from sqlalchemy import select
-from app import db,Student,Enrollment,EnrollmentPaymentSchedule,PaymentEntry,EnrollmentOpeningCredit,EnrollmentReview,EnrollmentReconciliationAudit,StudentArchive,StudentControl,LifecycleEvent,PaymentDeletionCase,Course,Cohort,TuitionControl,FeeInvoice,now
+from app import db,Student,Enrollment,EnrollmentPaymentSchedule,PaymentEntry,EnrollmentOpeningCredit,EnrollmentReview,EnrollmentReconciliationAudit,StudentArchive,StudentControl,LifecycleEvent,PaymentDeletionCase,Course,Cohort,TuitionControl,FeeInvoice,now,academy_today
 from test_portal import register,admin,csrf,analytics
 
 
@@ -18,7 +18,7 @@ def review(manager,sid,cid,cohort,eid=None,**values):
     path='/admin/students/'+sid+'/enrollment-review'+('?enrollment_id='+str(eid) if eid else '')
     page=manager.get(path);assert page.status_code==200
     version=re.search(rb'name="version" value="([^"]+)"',page.data)[1].decode()
-    fields=dict(csrf=csrf(manager,'/admin'),version=version,course_id=cid,cohort_id=cohort,student_kind='existing',mode='custom',agreed_total='1000',paid_total='400',currency='USD',installment_amount='200',frequency='monthly',next_due=(date.today()+timedelta(days=20)).isoformat(),confirm_program='yes',confirm_tuition='yes',records_confirmed='yes',allow_access='yes',decision='approve',reason='Verified prior tuition payments and agreed remaining installments.',admin_password='test-admin-password',replace_terms='yes')
+    fields=dict(csrf=csrf(manager,'/admin'),version=version,course_id=cid,cohort_id=cohort,student_kind='existing',mode='custom',agreed_total='1000',paid_total='400',currency='USD',installment_amount='200',frequency='monthly',next_due=(academy_today()+timedelta(days=20)).isoformat(),confirm_program='yes',confirm_tuition='yes',records_confirmed='yes',allow_access='yes',decision='approve',reason='Verified prior tuition payments and agreed remaining installments.',admin_password='test-admin-password',replace_terms='yes')
     fields.update(values)
     return manager.post(path,data=fields,follow_redirects=True)
 
@@ -86,7 +86,7 @@ def test_installment_final_amount_and_invalid_cohort_ownership(app):
 
 
 def overdue(app,manager,sid,cid,cohort):
-    review(manager,sid,cid,cohort,paid_total='0',allow_access='',next_due=date.today().isoformat())
+    review(manager,sid,cid,cohort,paid_total='0',allow_access='',next_due=academy_today().isoformat())
     app.config['PAYMENT_RETENTION_ENABLED']=True
     point=now();app.config['RETENTION_CLOCK']=lambda:point
     with app.app_context():result=app.extensions['account_retention']['sweep']();assert result['warned']==1
@@ -130,7 +130,7 @@ def test_other_paid_program_protects_account_from_deletion(app):
     with app.app_context():
         other=db.session.scalar(select(Cohort).where(Cohort.course_id!=cid))
         e=Enrollment(student_id=sid,course_id=other.course_id,cohort_id=other.id,status='approved',payment_status='verified');db.session.add(e);db.session.flush()
-        db.session.add(EnrollmentPaymentSchedule(enrollment_id=e.id,total=100,currency='USD',checkout_url='',stages=[dict(label='Paid',amount='100',due=date.today().isoformat())]));db.session.add(PaymentEntry(enrollment_id=e.id,reference='other-program-paid',amount=100,currency='USD'));db.session.commit()
+        db.session.add(EnrollmentPaymentSchedule(enrollment_id=e.id,total=100,currency='USD',checkout_url='',stages=[dict(label='Paid',amount='100',due=academy_today().isoformat())]));db.session.add(PaymentEntry(enrollment_id=e.id,reference='other-program-paid',amount=100,currency='USD'));db.session.commit()
         assert app.extensions['account_retention']['sweep']()['held']==1
         assert db.session.get(PaymentDeletionCase,sid).status=='held'
     app.config['RETENTION_CLOCK']=lambda:point+timedelta(days=50)
@@ -181,7 +181,7 @@ def test_daily_warning_delivery_is_personalized_and_stale_warnings_cancel(app,mo
 
 def test_opted_in_payment_reminders_generate_email_whatsapp_sms_and_send_sms(app,monkeypatch):
     from app import PaymentSMSPreference,TuitionWhatsAppPreference
-    student,manager,sid,cid,cohort=setup(app);review(manager,sid,cid,cohort,paid_total='0',allow_access='',next_due=date.today().isoformat())
+    student,manager,sid,cid,cohort=setup(app);review(manager,sid,cid,cohort,paid_total='0',allow_access='',next_due=academy_today().isoformat())
     response=student.post('/account/payment-alerts',data={'csrf':csrf(student,'/account/payment-alerts'),'phone':'+14375550123','sms':'yes','whatsapp':'yes'})
     assert response.status_code==302
     for key,value in {'TWILIO_ACCOUNT_SID':'AC'+'a'*32,'TWILIO_AUTH_TOKEN':'unit','TWILIO_WHATSAPP_FROM':'whatsapp:+19152219465','TWILIO_PAYMENT_SMS_FROM':'+14375550199','TWILIO_PAYMENT_TEMPLATE_SID':'HX'+'c'*32}.items():monkeypatch.setenv(key,value)
@@ -200,7 +200,7 @@ def test_opted_in_payment_reminders_generate_email_whatsapp_sms_and_send_sms(app
 
 
 def test_upcoming_three_day_reminder_uses_actual_remaining_installment(app):
-    _,manager,sid,cid,cohort=setup(app);review(manager,sid,cid,cohort,next_due=(date.today()+timedelta(days=3)).isoformat())
+    _,manager,sid,cid,cohort=setup(app);review(manager,sid,cid,cohort,next_due=(academy_today()+timedelta(days=3)).isoformat())
     with app.app_context():
         assert app.extensions['notifications']['due_reminders']()==1
         event=db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.kind=='payment_due'))
@@ -230,7 +230,7 @@ def test_linked_staff_or_admin_identity_holds_automatic_deletion(app):
 
 def test_provider_payment_does_not_bypass_pending_admin_decision(app):
     from app import LocalPaymentQuote,LocalCheckout
-    student,manager,sid,cid,cohort=setup(app);review(manager,sid,cid,cohort,paid_total='0',allow_access='',decision='save',next_due=date.today().isoformat())
+    student,manager,sid,cid,cohort=setup(app);review(manager,sid,cid,cohort,paid_total='0',allow_access='',decision='save',next_due=academy_today().isoformat())
     with app.app_context():eid=db.session.scalar(select(Enrollment.id))
     student.get('/payments/plans/'+str(eid))
     with app.app_context():

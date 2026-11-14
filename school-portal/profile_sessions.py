@@ -74,6 +74,7 @@ def install(app, db, m):
             return redirect(url_for('role_preview',role=mode))
     @app.after_request
     def establish(response):
+        if request.endpoint=='static':return response
         current=actor()
         # Authentication handlers clear the old session; issue a fresh server-side activity nonce.
         if current and not session.get('portal_session') and (not getattr(g,'portal_actor_before',None) or session.get('linked_profiles')) and response.status_code<400:
