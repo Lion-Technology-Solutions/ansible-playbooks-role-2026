@@ -5,11 +5,11 @@ from decimal import Decimal
 from urllib.parse import quote as escape_url,urlsplit
 from types import SimpleNamespace
 from flask import g,session,request,abort,redirect,url_for,flash
-from sqlalchemy import select
+from sqlalchemy import select,or_
 from babel.numbers import get_currency_precision
 from providers import ORIGIN,stripe_request,api
 from payment_routing import provider_for_country
-from flutterwave_payments import CURRENCIES as FLW_CURRENCIES,checkout_url
+from flutterwave_payments import CURRENCIES as FLW_CURRENCIES,checkout_url,production_checkout_blocked,credential_mode
 
 
 def install(app,db,m,h):
@@ -37,7 +37,7 @@ def install(app,db,m,h):
             value=expected(enrollment);converted=locale['quote'](value['amount'],value['currency'],offset=value['offset'])
             if not converted['available'] or Decimal(converted['amount'])<=0:return None
             key=fingerprint(enrollment,value)
-            active=db.session.scalar(select(Quote).join(Checkout,Checkout.quote_id==Quote.id).where(Quote.enrollment_id==enrollment.id,Quote.credited.is_(False)).order_by(Quote.expires_at.desc()).limit(1))
+            active=db.session.scalar(select(Quote).join(Checkout,Checkout.quote_id==Quote.id).where(Quote.enrollment_id==enrollment.id,Quote.credited.is_(False),active_attempt()).order_by(Quote.expires_at.desc()).limit(1))
             if active:g.pinned_local_quote=active;return active
             pending=db.session.scalar(select(Quote).join(m['PlanPaymentProof'],m['PlanPaymentProof'].id==Quote.proof_id).where(Quote.enrollment_id==enrollment.id,Quote.fingerprint==key,m['PlanPaymentProof'].status=='submitted').limit(1))
             if pending:g.pinned_local_quote=pending;return pending
@@ -65,7 +65,7 @@ def install(app,db,m,h):
         return cache[key]
     def check_supported(provider,row):
         if not integrations['ready'](provider):return False
-        if provider=='flutterwave':return row.currency in FLW_CURRENCIES
+        if provider=='flutterwave':return row.currency in FLW_CURRENCIES and not production_checkout_blocked(integrations['config']('flutterwave').get('FLW_SECRET_KEY',''))
         try:
             country=stripe('account').get('country','')
             if not isinstance(country,str) or len(country)!=2 or not country.isalpha():return False
@@ -75,7 +75,15 @@ def install(app,db,m,h):
     def legacy_pending(enrollment):
         invoice=db.session.scalar(select(m['FeeInvoice']).where(m['FeeInvoice'].enrollment_id==enrollment.id))
         if not invoice:return False
-        return any(db.session.scalar(select(m[name].id).where(m[name].invoice_id==invoice.id,m[name].paid.is_(False)).limit(1)) for name in ('CardCheckout','FlutterwaveCheckout'))
+        for name in ('CardCheckout','FlutterwaveCheckout'):
+            query=select(m[name].id).where(m[name].invoice_id==invoice.id,m[name].paid.is_(False))
+            if name=='FlutterwaveCheckout' and live_flutterwave():query=query.where(m[name].test_mode.is_(False))
+            if db.session.scalar(query.limit(1)):return True
+        return False
+    def live_flutterwave():return credential_mode(integrations['config']('flutterwave').get('FLW_SECRET_KEY',''))=='live'
+    def active_attempt():
+        # Preserve test history, but never reuse a sandbox handoff after going live.
+        return or_(Checkout.provider!='flutterwave',Checkout.test_mode.is_(False)) if live_flutterwave() else True
     def minor(row):return int(row.amount*(100 if row.currency in ('ISK','UGX') else 10**get_currency_precision(row.currency)))
     def safe_stripe_url(value):
         parsed=urlsplit(value or '')
@@ -88,14 +96,15 @@ def install(app,db,m,h):
         destination=url_for('link_payment_plan',enrollment_id=enrollment.id) if row.stage>=0 and row.stage<100 else url_for('global_payment',enrollment_id=enrollment.id)
         if provider not in ('stripe','flutterwave'):abort(404)
         try:
+            if provider=='flutterwave' and production_checkout_blocked(integrations['config']('flutterwave').get('FLW_SECRET_KEY','')):raise ValueError('Live payments are temporarily unavailable. Please contact payment support. No payment has been confirmed.')
             # Serialize handoffs for the same enrollment before checking pending attempts.
             db.session.scalar(select(m['Enrollment']).where(m['Enrollment'].id==enrollment.id).with_for_update())
             if legacy_pending(enrollment):raise ValueError('An earlier checkout is awaiting verification. Contact support before paying again.')
-            outstanding=db.session.scalar(select(Checkout).join(Quote,Quote.id==Checkout.quote_id).where(Quote.enrollment_id==enrollment.id,Quote.credited.is_(False),Quote.id!=row.id).limit(1))
+            outstanding=db.session.scalar(select(Checkout).join(Quote,Quote.id==Checkout.quote_id).where(Quote.enrollment_id==enrollment.id,Quote.credited.is_(False),Quote.id!=row.id,active_attempt()).limit(1))
             if outstanding:raise ValueError('An earlier payment is awaiting verification. Contact support before paying again.')
             validate(row.id,enrollment)
             if not supported(provider,row):raise ValueError('This provider cannot currently charge in your local currency. Please contact support. No alternative provider will be substituted.')
-            previous=db.session.scalar(select(Checkout).where(Checkout.quote_id==row.id,Checkout.provider==provider))
+            previous=db.session.scalar(select(Checkout).where(Checkout.quote_id==row.id,Checkout.provider==provider,active_attempt()))
             if previous:
                 if previous.paid:raise ValueError('Payment is already received. Review its status before paying again.')
                 if previous.checkout_url:return redirect(previous.checkout_url,303)
@@ -189,5 +198,5 @@ def install(app,db,m,h):
     def proof_quote(proof):return db.session.scalar(select(Quote).where(Quote.proof_id==proof.id))
     @app.context_processor
     def context():
-        return dict(local_checkout_reviews=db.session.scalars(select(Checkout).where(Checkout.paid.is_(True),Checkout.needs_review.is_(True)).order_by(Checkout.id)).all() if session.get('admin') else [],local_provider_test=lambda provider:integrations['config'](provider).get('STRIPE_SECRET_KEY' if provider=='stripe' else 'FLW_SECRET_KEY','').startswith('sk_test_' if provider=='stripe' else 'FLWSECK_TEST-'),legacy_payment_pending=legacy_pending,local_payment_history=lambda enrollment:db.session.scalars(select(Checkout).join(Quote,Quote.id==Checkout.quote_id).where(Quote.enrollment_id==enrollment.id).order_by(Quote.expires_at.desc())).all(),local_payment_quote=current,local_payment_attempt=lambda row:db.session.scalar(select(Checkout).where(Checkout.quote_id==row.id)) if row else None,local_quote_expired=lambda row:aware(row.expires_at)<=now(),local_provider_ready=supported,local_quote_label=lambda row:locale['format'](row.amount,row.currency) if row else 'Local payment unavailable',proof_quote=proof_quote)
+        return dict(local_checkout_reviews=db.session.scalars(select(Checkout).where(Checkout.paid.is_(True),Checkout.needs_review.is_(True)).order_by(Checkout.id)).all() if session.get('admin') else [],local_provider_test=lambda provider:integrations['config'](provider).get('STRIPE_SECRET_KEY' if provider=='stripe' else 'FLW_SECRET_KEY','').startswith('sk_test_' if provider=='stripe' else 'FLWSECK_TEST-'),legacy_payment_pending=legacy_pending,local_payment_history=lambda enrollment:db.session.scalars(select(Checkout).join(Quote,Quote.id==Checkout.quote_id).where(Quote.enrollment_id==enrollment.id).order_by(Quote.expires_at.desc())).all(),local_payment_quote=current,local_payment_attempt=lambda row:db.session.scalar(select(Checkout).where(Checkout.quote_id==row.id,active_attempt())) if row else None,local_quote_expired=lambda row:aware(row.expires_at)<=now(),local_provider_ready=supported,local_quote_label=lambda row:locale['format'](row.amount,row.currency) if row else 'Local payment unavailable',proof_quote=proof_quote)
     return dict(current=current,validate=validate,expected=expected,webhook=webhook,proof_quote=proof_quote,settle=settle)

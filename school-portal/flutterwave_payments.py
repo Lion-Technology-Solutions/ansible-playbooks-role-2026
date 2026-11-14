@@ -1,5 +1,6 @@
 """Invoice-bound Flutterwave V3 hosted checkout and verified settlement."""
 import hmac
+import os
 import re
 import secrets
 from datetime import timedelta
@@ -12,6 +13,16 @@ from localization import converted,formatted
 from providers import ORIGIN,api
 
 CURRENCIES={'USD','NGN','GHS','XAF','XOF','KES','UGX','TZS','ZAR','RWF','EGP','GBP','EUR'}
+
+
+def credential_mode(key):
+    if key.startswith('FLWSECK_TEST-'):return 'test'
+    if key.startswith('FLWSECK-'):return 'live'
+    return 'unconfigured'
+
+
+def production_checkout_blocked(key):
+    return os.environ.get('VERCEL_ENV')=='production' and credential_mode(key)!='live'
 
 
 def checkout_url(value):
@@ -60,6 +71,7 @@ def install(app,db,m,h):
         if app.extensions['program_link_plans']['existing'](invoice.enrollment):return redirect(url_for('link_payment_plan',enrollment_id=invoice.enrollment_id))
         if not service['ready']('flutterwave'):abort(503,'Flutterwave checkout is awaiting provider configuration. Contact support or use another payment method.')
         try:
+            if production_checkout_blocked(values().get('FLW_SECRET_KEY','')):raise ValueError('Live payments are temporarily unavailable. Please contact payment support. No payment has been confirmed.')
             h['verify_identity']()
             invoice=db.session.scalar(select(Invoice).where(Invoice.id==invoice_id).with_for_update().execution_options(populate_existing=True))
             if invoice.status!='pending':raise ValueError('This invoice no longer requires payment.')
@@ -136,7 +148,7 @@ def install(app,db,m,h):
                 elif service['ready']('flutterwave'):
                     try:quote=amount(inv)
                     except ValueError as exc:error=str(exc)
-        return dict(flutterwave_ready=service['ready']('flutterwave'),flutterwave_quote=quote,flutterwave_record=checkout,flutterwave_quote_error=error,
+        return dict(flutterwave_ready=service['ready']('flutterwave') and not production_checkout_blocked(values().get('FLW_SECRET_KEY','')),flutterwave_quote=quote,flutterwave_record=checkout,flutterwave_quote_error=error,
             flutterwave_test_mode=values().get('FLW_SECRET_KEY','').startswith('FLWSECK_TEST-'),
             flutterwave_admin_records=list(db.session.scalars(select(Checkout).order_by(Checkout.created_at.desc()))) if session.get('admin') and request.endpoint=='admin' else [])
     return dict(verify=verify)

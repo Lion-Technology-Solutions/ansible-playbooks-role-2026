@@ -170,3 +170,22 @@ def test_live_checkout_can_follow_sandbox_without_reusing_test_payment(app,monke
         assert len(db.session.scalars(select(FlutterwaveCheckout)).all())==2
         assert len(db.session.scalars(select(PaymentEntry)).all())==1
         assert db.session.get(FeeInvoice,state[5]).status=='paid'
+
+
+@pytest.mark.parametrize('key',['FLWSECK_TEST-unit','FLWPUBK-unit',''])
+def test_production_rejects_non_live_credentials_before_creating_attempt(app,monkeypatch,key):
+    state,calls,actual=prepare(app,monkeypatch,test=True)
+    monkeypatch.setenv('FLW_SECRET_KEY',key)
+    monkeypatch.setenv('VERCEL_ENV','production')
+    response=checkout(state)
+    assert response.status_code in (302,503)
+    assert not calls
+    with app.app_context():assert db.session.scalar(select(FlutterwaveCheckout)) is None
+
+
+def test_production_live_checkout_preserves_verified_settlement(app,monkeypatch):
+    state,calls,actual=prepare(app,monkeypatch)
+    monkeypatch.setenv('VERCEL_ENV','production')
+    assert checkout(state).status_code==303
+    assert webhook(app,actual).status_code==200
+    with app.app_context():assert db.session.get(FeeInvoice,state[5]).status=='paid'

@@ -119,9 +119,13 @@ def install(app,db,m,h):
         if provider in ('google','microsoft'):
             return 'oauth_ready','OAuth application settings saved. Each student must authorize calendar access before an account is connected.'
         if provider=='flutterwave':
+            from flutterwave_payments import credential_mode,production_checkout_blocked
+            mode=credential_mode(values.get('FLW_SECRET_KEY',''))
+            if mode=='unconfigured':raise ValueError('Use a Flutterwave V3 secret API key. A public key or webhook secret hash cannot authenticate checkout.')
             result=transport('https://api.flutterwave.com/v3/balances',headers=bearer(values['FLW_SECRET_KEY']))
             if result.get('status')!='success':raise ValueError('Flutterwave authentication was not verified.')
-            return 'connected','V3 merchant API authentication verified. Register the V3 webhook URL and matching secret hash. Checkout is for enrollment fees; sandbox payments do not grant class access.'
+            if production_checkout_blocked(values['FLW_SECRET_KEY']):return 'attention','Test credentials authenticated. Production checkout is blocked. Save your V3 LIVE secret API key and matching LIVE webhook secret hash, then test again. Test transactions never grant enrollment credit.'
+            return 'connected',('LIVE' if mode=='live' else 'TEST')+' V3 merchant API authentication verified. Register the matching V3 webhook URL and secret hash. Merchant activation and enabled payment methods must also be confirmed in Flutterwave.'
         if provider=='whatsapp':
             basic=base64.b64encode((values['TWILIO_ACCOUNT_SID']+':'+values['TWILIO_AUTH_TOKEN']).encode()).decode()
             result=transport('https://api.twilio.com/2010-04-01/Accounts/'+quote(values['TWILIO_ACCOUNT_SID'],safe='')+'.json',headers={'Authorization':'Basic '+basic})
@@ -156,6 +160,11 @@ def install(app,db,m,h):
         if not complete:return {'label':'Not connected','kind':'disconnected','detail':'Complete the setup fields to configure this provider.','checked_at':None}
         state=row.status if row else 'needs_test'
         labels={'connected':'Connection verified','needs_test':'Saved · test required','oauth_ready':'OAuth setup saved · consent required','attention':'Action required','error':'Connection test failed'}
+        if provider=='flutterwave':
+            from flutterwave_payments import credential_mode,production_checkout_blocked
+            mode=credential_mode(values.get('FLW_SECRET_KEY',''))
+            if production_checkout_blocked(values.get('FLW_SECRET_KEY','')):return {'label':'Live credentials required','kind':'attention','detail':'Production checkout requires a V3 LIVE secret API key. Test credentials cannot accept real payments. Save the live key and matching live webhook secret hash, then test the connection.','checked_at':row.checked_at if row else None}
+            if state=='connected':labels['connected']='Live API verified' if mode=='live' else 'Test API verified'
         return {'label':labels.get(state,'Saved · test required'),'kind':state,'detail':row.detail if row else 'Credentials are configured in the deployment. Save and validate them here to manage them from this hub.','checked_at':row.checked_at if row else None}
 
     @app.get('/admin/integrations')
