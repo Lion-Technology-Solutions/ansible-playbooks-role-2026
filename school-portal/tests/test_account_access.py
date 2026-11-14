@@ -47,9 +47,14 @@ def test_active_accounts_show_courses_payments_and_announcements_but_hide_schedu
          summary='Welcome to LionTech',body='View your course details and complete payment.',publication_state='published',
          starts_at='',ends_at='',registration_url='',location='',publish_at='')
     page=student.get('/portal')
-    for text in [b'Account automatically approved',b'Curriculum',b'View enrollment payment',b'Payment methods',
+    for text in [b'Account automatically approved',b'Curriculum',b'View enrollment payment',
                  b'Student welcome update',b'Power BI']:
         assert text in page.data
+    # Check the actual enrollment payment link, rather than a hidden translation key.
+    from flask import url_for
+    with app.test_request_context():
+        payment_url=url_for('global_payment',enrollment_id=eid)
+    assert ('href="'+payment_url+'"').encode() in page.data
     assert_locked(student,course,lesson,rid)
     with app.app_context():
         assert db.session.scalar(select(Student)).approved
