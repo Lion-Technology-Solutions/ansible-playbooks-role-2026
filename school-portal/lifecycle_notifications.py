@@ -344,7 +344,7 @@ def install(app,db,m,h):
             enqueue(student,'payment_due',key,dict(enrollment_id=enrollment.id,course=enrollment.course.name,due=due.isoformat(),amount=str(invoice.amount_usd)+' USD',fee=True));count+=1
         db.session.commit();return count
     def drain(limit=100):
-        identities=list(db.session.scalars(select(Event.id).where(Event.status.in_(['pending','failed','awaiting_email','awaiting_sms_sender','awaiting_whatsapp_template','awaiting_student_consent','unsupported_whatsapp_template','template_fields_mismatch','template_approval_pending','awaiting_staff_consent']),Event.attempts<5).order_by(Event.created_at).limit(limit)))
+        identities=list(db.session.scalars(select(Event.id).where(Event.status.in_(['pending','failed','awaiting_email','awaiting_sms_sender','awaiting_whatsapp_template','awaiting_student_consent','unsupported_whatsapp_template','template_fields_mismatch','template_approval_pending','awaiting_staff_consent','awaiting_whatsapp_provider']),Event.attempts<5).order_by(Event.created_at).limit(limit)))
         for identity in identities:
             try:process(identity)
             except RuntimeError:pass

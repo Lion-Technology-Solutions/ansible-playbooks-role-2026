@@ -143,7 +143,11 @@ def test_payment_deletion_and_assignment_notices_create_deduplicated_followup(ap
 
 
 def test_admin_whatsapp_independent_recipients_and_uncertain_never_resends(app):
-    _,_,_,_=configured(app);register(app.test_client());enable_email(app)
+    _,_,_,_=configured(app);register(app.test_client())
+    with app.app_context():
+        pending=db.session.scalar(select(LifecycleEvent).where(LifecycleEvent.kind=='advisor_admin_assigned',LifecycleEvent.channel=='whatsapp'))
+        app.extensions['notifications']['process'](pending.id);assert pending.status=='awaiting_whatsapp_provider'
+    enable_email(app)
     sent=[];app.config['LIFECYCLE_HTTP']=lambda *a:sent.append(a) or {'sid':'SM'+'a'*32}
     with app.app_context():
         rows=list(db.session.scalars(select(LifecycleEvent).where(LifecycleEvent.kind=='advisor_admin_assigned',LifecycleEvent.channel=='whatsapp')))
@@ -206,3 +210,13 @@ def test_parallel_account_transactions_share_one_persistent_rotation(tmp_path):
             assert ids==[first,second,first,second]
     finally:
         with application.app_context():db.session.remove();db.engine.dispose()
+
+
+
+def test_existing_account_first_enrollment_receives_advisor_introduction(app):
+    client=app.test_client();register(client,'older-account@example.test',kind='existing')
+    configured(app)
+    cid,cohort=analytics(app);request_enrollment(client,cid,cohort)
+    with app.app_context():
+        assert count(StudentAdvisor)==1
+        assert len(list(db.session.scalars(select(LifecycleEvent).where(LifecycleEvent.kind=='student_advisor_assigned'))))==1

@@ -105,7 +105,7 @@ def install(app,db,m,h):
         existing=next((v for v in target.new if isinstance(v,Advisor) and v.student is student),None)
         existing=existing or (target.get(Advisor,student.id) if student.id else None)
         if existing:return existing
-        assignment=Advisor(student=student);target.add(assignment);allocate(target,assignment,initial=True)
+        assignment=Advisor(student=student);target.add(assignment);allocate(target,assignment,initial=student in target.new)
         return assignment
     def details(student):
         assignment=db.session.get(Advisor,student.id)
@@ -138,7 +138,7 @@ def install(app,db,m,h):
         return info['email'],('Advisor follow-up task assigned · ' if event.kind=='advisor_followup_assigned' else 'New student assigned · ')+task_number(task),f"Hello {info['name']},\nA {'new' if student.kind=='new' else 'existing'} student account is assigned to you.\n{task_number(task)} · {task.title}\nStudent: {student.name}\nStudent number: {student.student_number}\nEmail: {student.email}\nWhatsApp: {contacts['whatsapp'] or 'Not provided'}\nChat with student: {contacts['whatsapp_url'] or 'Use email to confirm their WhatsApp number'}\nOpen assigned student: {ORIGIN}/staff/tasks/{task.id}/record\n\nAdvisor checklist:\n"+'\n'.join('- '+v for v in CHECKLIST.values())+'\nOnly the administrator approves existing tuition records. New students pay through portal checkout.'
     def whatsapp(event):
         info=details(event.student);task=event_task(event,info);values=service['config']('whatsapp')
-        if not service['ready']('whatsapp'):event.status='awaiting_whatsapp_template';db.session.commit();return
+        if not service['ready']('whatsapp') or not re.fullmatch(r'AC[0-9a-fA-F]{32}',values.get('TWILIO_ACCOUNT_SID','')) or not re.fullmatch(r'whatsapp:\+[1-9][0-9]{6,14}',values.get('TWILIO_WHATSAPP_FROM','')) or not values.get('TWILIO_AUTH_TOKEN'):event.status='awaiting_whatsapp_provider';db.session.commit();return
         if event.kind=='advisor_admin_assigned':
             recipient=event.payload.get('admin_number','')
             if recipient not in admin_numbers():event.status='cancelled';db.session.commit();return
