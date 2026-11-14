@@ -99,6 +99,7 @@ def install(app,db,m,h):
         for row in list(session_.new)+list(session_.dirty):
             state=inspect(row)
             if isinstance(row,Student) and state.pending:
+                if 'student_advisors' in app.extensions:app.extensions['student_advisors']['assign'](session_,row)
                 enqueue(row,'account_created',channel='email',session_=session_)
                 enqueue(row,'support_account_created',channel='email',session_=session_)
             elif isinstance(row,Control):
@@ -109,6 +110,9 @@ def install(app,db,m,h):
                 student=session_.get(Student,row.student_id)
                 if student and (row.email_verified_at or (student.created_at and aware(student.created_at)>now()-timedelta(minutes=5))):enqueue(student,'account_approved',session_=session_)
             elif isinstance(row,Enrollment):
+                if state.pending and 'student_advisors' in app.extensions:
+                    account=row.student or session_.get(Student,row.student_id)
+                    if account:app.extensions['student_advisors']['assign'](session_,account)
                 if row.id in session_.info.get('tuition_managed',set()):continue
                 student=session_.get(Student,row.student_id)
                 if not student:continue
@@ -117,11 +121,19 @@ def install(app,db,m,h):
                 if state.attrs.status.history.has_changes():
                     if row.status=='approved':enqueue(student,'enrollment_approved',payload=payload,session_=session_)
                     elif row.status in ('revoked','rejected') and ('approved' in state.attrs.status.history.deleted or row.status=='revoked'):enqueue(student,'access_revoked',payload=payload,session_=session_)
+        if 'student_advisors' in app.extensions:
+            for item in list(session_.new):
+                if isinstance(item,Event):app.extensions['student_advisors']['followup'](session_,item)
     def message(event):
-        if event.kind=='payment_deletion_warning':return app.extensions['account_retention']['warning_text'](event)
+        if event.kind=='payment_deletion_warning':
+            title,body=app.extensions['account_retention']['warning_text'](event);return title,body+app.extensions['student_advisors']['contacts_text'](event.student)
         if event.kind=='staff_enrollment_submitted':return 'Staff enrollment submission ready for review',('An assigned team member submitted an enrollment packet. Sign in to verify the program, tuition and payment evidence before granting access.\n'+ORIGIN+'/admin/enrollment-submissions/'+event.payload['submission_id'])
+        if event.kind in ('student_advisor_assigned','advisor_student_assigned','advisor_admin_assigned','advisor_followup_assigned'):return app.extensions['student_advisors']['email'](event)[1:]
         if event.kind=='account_created':
-            return 'Welcome to LionTech Academy',('Hello '+event.student.name+',\nYour student account has been created.\nStudent number: '+event.student.student_number+'\nVerify your email if prompted, then select your program and complete enrollment in the portal. Account creation does not confirm payment or grant learning access.\n'+ORIGIN+'/student/login\nSupport: liontechacademy@gmail.com')
+            return 'Welcome to LionTech Academy',('Hello '+event.student.name+',\nYour student account has been created.\nStudent number: '+event.student.student_number+'\nVerify your email if prompted, then select your program and complete enrollment in the portal. Account creation does not confirm payment or grant learning access.\n'+ORIGIN+'/student/login\nSupport: liontechacademy@gmail.com'+app.extensions['student_advisors']['identity_text'](event.student)+app.extensions['student_advisors']['contacts_text'](event.student))
+        if event.kind=='assignment_due':
+            assessment=db.session.get(m['Assessment'],event.payload['assessment_id'])
+            return 'Course assignment due soon · '+assessment.title,'Hello '+event.student.name+',\nAssignment: '+assessment.title+'\nDue: '+app.extensions['local_experience']['time'](assessment.due_at,event.student)+'\nOpen your coursework: '+ORIGIN+'/portal#assignments'+app.extensions['student_advisors']['contacts_text'](event.student)
         if event.kind=='class_reminder':
             lesson=db.session.get(m['ClassSession'],event.payload['class_id'])
             local=app.extensions['local_experience']['time'](lesson.starts_at,event.student)
@@ -130,7 +142,7 @@ def install(app,db,m,h):
             return 'Payment receipt ready for review',('Student: '+event.student.name+'\nStudent number: '+event.student.student_number+'\nProgram: '+event.payload.get('course','')+'\nAmount submitted for verification: '+event.payload.get('amount','')+'\nReview privately: '+ORIGIN+'/admin?view=payments\nSign in and verify actual funds before approving access.')
         if event.kind=='support_account_created':
             student=event.student
-            return 'New student account — LionTech review required',('A student account has been created.\nStudent: '+student.name+'\nStudent number: '+student.student_number+'\nReview the account and enrollment: '+ORIGIN+'/admin/students/'+student.id+'/review'+'\nAdministrator sign-in is required. Account creation does not confirm payment or grant class access.')
+            return 'New student account — LionTech review required',('A student account has been created.\nStudent: '+student.name+'\nStudent number: '+student.student_number+'\nReview the account and enrollment: '+ORIGIN+'/admin/students/'+student.id+'/review'+'\nAdministrator sign-in is required. Account creation does not confirm payment or grant class access.'+app.extensions['student_advisors']['welcome'](student))
         if event.kind in ('admin_message','enrollment_review') or (event.kind=='enrollment_approved' and event.payload.get('body')):return event.payload['subject'],app.extensions['local_experience']['text'](event.payload['body'],event.student)+'\n\nStudent number: '+event.student.student_number+'\n'+ORIGIN+'/enrollments'
         if event.kind=='tuition_status':
             status=event.payload.get('status','pending');course=event.payload.get('course','');reason=app.extensions['local_experience']['text'](event.payload.get('reason',''),event.student)
@@ -164,10 +176,20 @@ def install(app,db,m,h):
         lines.append(ORIGIN+'/payments/enrollment/'+str(data['enrollment_id']) if data.get('enrollment_id') else ORIGIN+('/enrollments' if event.kind=='account_approved' else '/student/login'))
         lines.append(('Mise à jour enregistrée : ' if fr else 'Update recorded: ')+app.extensions['local_experience']['time'](event.created_at,student))
         lines.append('Support: liontechacademy@gmail.com · https://wa.me/14375756656')
-        return title,'\n\n'.join(lines)
+        return title,'\n\n'.join(lines)+(app.extensions['student_advisors']['contacts_text'](student) if event.kind=='payment_due' else '')
     def process(identity):
         row=db.session.scalar(select(Event).where(Event.id==identity).with_for_update().execution_options(populate_existing=True))
         if not row or row.status in ('accepted','cancelled','expired') or row.attempts>=5:return
+        student=row.student
+        if row.kind in ('student_advisor_assigned','advisor_student_assigned','advisor_admin_assigned','advisor_followup_assigned'):
+            if row.status=='uncertain':return
+            if aware(row.created_at)<now()-timedelta(days=7):row.status='expired';db.session.commit();return
+            if not app.extensions['student_advisors']['valid'](row):row.status='cancelled';db.session.commit();return
+            if row.channel=='whatsapp':return app.extensions['student_advisors']['whatsapp'](row)
+        if row.kind=='assignment_due':
+            assessment=db.session.get(m['Assessment'],row.payload.get('assessment_id'));enrollment=db.session.get(Enrollment,row.payload.get('enrollment_id'))
+            if not assessment or not assessment.due_at or aware(assessment.due_at)<=now() or aware(assessment.due_at).isoformat()!=row.payload.get('due') or not enrollment or enrollment.student_id!=student.id or enrollment.status!='approved' or enrollment.payment_status!='verified' or db.session.scalar(select(m['Submission'].id).where(m['Submission'].student_id==student.id,m['Submission'].assessment_id==assessment.id)):
+                row.status='cancelled';db.session.commit();return
         # Retire unsent CRM/HubSpot alerts, including rows queued by earlier releases.
         if row.channel=='whatsapp' and row.kind not in ('class_schedule','class_reminder','tuition_status','payment_due'):
             row.status='cancelled';db.session.commit();return
@@ -221,10 +243,11 @@ def install(app,db,m,h):
             if row.channel=='email':
                 if not service['ready']('email'):row.status='awaiting_email';db.session.commit();return
                 values=service['config']('email');title,body=message(row);recipient=row.payload.get('recipient') or student.email
+                if row.kind in ('student_advisor_assigned','advisor_student_assigned','advisor_admin_assigned','advisor_followup_assigned'):recipient=app.extensions['student_advisors']['email'](row)[0]
                 if row.kind in ('support_account_created','support_payment_review','staff_enrollment_submitted'):
                     recipient=app.config.get('ADMIN_NOTIFICATION_EMAIL','liontechacademy@gmail.com')
                 row.attempts+=1
-                transport('https://api.sendgrid.com/v3/mail/send','POST',{'personalizations':[{'to':[{'email':recipient}]}],'from':{'email':values['SENDGRID_FROM_EMAIL']},'reply_to':{'email':app.config.get('ADMIN_NOTIFICATION_EMAIL','liontechacademy@gmail.com')},'subject':title,'content':[{'type':'text/plain','value':body}]},{'Authorization':'Bearer '+values['SENDGRID_API_KEY']})
+                transport('https://api.sendgrid.com/v3/mail/send','POST',{'personalizations':[{'to':[{'email':recipient}]}],'from':{'email':values['SENDGRID_FROM_EMAIL']},'reply_to':{'email':app.config.get('ADMIN_NOTIFICATION_EMAIL','liontechacademy@gmail.com')},'subject':title,'content':([{'type':'text/plain','value':body},{'type':'text/html','value':app.jinja_env.get_template('advisor_welcome_email.html').render(student=student,advisor=app.extensions['student_advisors']['details'](student),username=db.session.get(m['AuthProfile'],student.id).username if db.session.get(m['AuthProfile'],student.id) else '',programs=list(db.session.scalars(select(Enrollment).where(Enrollment.student_id==student.id))),origin=ORIGIN)}] if row.kind in ('account_created','student_advisor_assigned') else [{'type':'text/plain','value':body}])},{'Authorization':'Bearer '+values['SENDGRID_API_KEY']})
             elif row.channel=='sms':
                 if row.kind!='payment_due':row.status='cancelled';db.session.commit();return
                 app.extensions['payment_alerts']['sms'](row,transport,message);db.session.commit();return
@@ -255,7 +278,7 @@ def install(app,db,m,h):
                     if not re.fullmatch(r'\+[1-9][0-9]{6,14}',consent.phone):row.status='invalid_recipient';db.session.commit();return
                     template=values.get('TWILIO_PAYMENT_TEMPLATE_SID','');recipient='whatsapp:'+consent.phone
                     _,summary=message(row)
-                    variables={'1':student.student_number,'2':row.payload.get('course','Tuition'),'3':summary[:900].replace('\n',' '),'4':ORIGIN+'/payments/enrollment/'+str(row.payload['enrollment_id'])}
+                    variables={'1':student.student_number,'2':row.payload.get('course','Tuition'),'3':(app.extensions['student_advisors']['contacts_text'](student)+'\n'+summary)[:900].replace('\n',' '),'4':ORIGIN+'/payments/enrollment/'+str(row.payload['enrollment_id'])}
                 if not service['ready']('whatsapp') or not re.fullmatch(r'HX[0-9a-fA-F]{32}',template):
                     row.status='awaiting_whatsapp_template';db.session.commit();return
                 if not re.fullmatch(r'AC[0-9a-fA-F]{32}',values.get('TWILIO_ACCOUNT_SID','')) or not re.fullmatch(r'whatsapp:\+[1-9][0-9]{6,14}',values.get('TWILIO_WHATSAPP_FROM','')):raise ValueError()
@@ -321,7 +344,7 @@ def install(app,db,m,h):
             enqueue(student,'payment_due',key,dict(enrollment_id=enrollment.id,course=enrollment.course.name,due=due.isoformat(),amount=str(invoice.amount_usd)+' USD',fee=True));count+=1
         db.session.commit();return count
     def drain(limit=100):
-        identities=list(db.session.scalars(select(Event.id).where(Event.status.in_(['pending','failed','awaiting_email','awaiting_sms_sender','awaiting_whatsapp_template','awaiting_student_consent','unsupported_whatsapp_template','template_fields_mismatch','template_approval_pending']),Event.attempts<5).order_by(Event.created_at).limit(limit)))
+        identities=list(db.session.scalars(select(Event.id).where(Event.status.in_(['pending','failed','awaiting_email','awaiting_sms_sender','awaiting_whatsapp_template','awaiting_student_consent','unsupported_whatsapp_template','template_fields_mismatch','template_approval_pending','awaiting_staff_consent']),Event.attempts<5).order_by(Event.created_at).limit(limit)))
         for identity in identities:
             try:process(identity)
             except RuntimeError:pass
@@ -331,7 +354,7 @@ def install(app,db,m,h):
     def daily_notifications():
         secret=app.config.get('CRON_SECRET') or os.environ.get('CRON_SECRET','')
         if not secret or not hmac.compare_digest(request.headers.get('Authorization',''),'Bearer '+secret):abort(401)
-        return jsonify(lesson_review_notices=app.extensions['lesson_review_notices']['drain'](),staff_task_alerts=app.extensions['task_alerts']['arm'](),class_reminders=app.extensions['class_reminders']['arm'](),reminders=due_reminders(),payment_deletion=app.extensions['account_retention']['sweep'](),processed=drain(200),staff_mail=app.extensions['staff_portal']['drain']() if 'staff_portal' in app.extensions else 0)
+        return jsonify(student_advisors=app.extensions['student_advisors']['backfill'](100),assignment_reminders=app.extensions['student_advisors']['assignment_reminders'](),lesson_review_notices=app.extensions['lesson_review_notices']['drain'](),staff_task_alerts=app.extensions['task_alerts']['arm'](),class_reminders=app.extensions['class_reminders']['arm'](),reminders=due_reminders(),payment_deletion=app.extensions['account_retention']['sweep'](),processed=drain(200),staff_mail=app.extensions['staff_portal']['drain']() if 'staff_portal' in app.extensions else 0)
 
     def refresh_delivery(limit=20,force=False):
         values=service['config']('whatsapp');result_counts={'checked':0,'failed':0,'missing':0}

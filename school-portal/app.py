@@ -1121,6 +1121,10 @@ globals().update(define_account_retention(db,now))
 from payment_alerts import define as define_payment_alerts
 globals().update(define_payment_alerts(db,now))
 
+from student_advisors import define as define_student_advisors
+globals().update(define_student_advisors(db,now))
+
+
 def create_app(config=None):
     app = Flask(__name__)
     testing = os.environ.get('SCHOOL_TESTING') == '1'
@@ -2326,6 +2330,8 @@ def create_app(config=None):
     install_account_retention(app,db,globals(),dict(admin_required=admin_required))
     from class_reminders import install as install_class_reminders
     app.extensions['class_reminders']=install_class_reminders(app,db,globals())
+    from student_advisors import install as install_student_advisors
+    install_student_advisors(app,db,globals(),dict(admin_required=admin_required))
     from pathways import install as install_pathways
     app.extensions['pathways']=install_pathways(app,db,globals(),dict(enrollment_for=enrollment_for,student_required=student_required,notify=notify))
     return app

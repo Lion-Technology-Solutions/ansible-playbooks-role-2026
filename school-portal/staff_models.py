@@ -22,6 +22,8 @@ def define(db,now):
         created_at=db.Column(db.DateTime(timezone=True),nullable=False,default=now)
         @property
         def staff_number(self):return 'LTA-STF-'+str(self.id).zfill(4)
+        @property
+        def is_student_advisor(self):return bool(self.active and self.verified_at)
     class StaffInvite(db.Model):
         __tablename__='staff_invitations'
         id=db.Column(db.String(32),primary_key=True,default=lambda:secrets.token_hex(16))
